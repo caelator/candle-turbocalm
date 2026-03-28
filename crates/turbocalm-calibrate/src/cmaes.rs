@@ -3,11 +3,10 @@
 //! Self-contained implementation optimized for continuous parameter optimization
 //! in the turbocalm calibration pipeline.
 
-use crate::{ContinuousParams, FitnessMetrics};
+use crate::ContinuousParams;
 use anyhow::Result;
 use rand::{Rng, SeedableRng};
 use rand_distr::Normal;
-use std::f64::consts::{E, PI};
 
 /// CMA-ES optimizer for continuous parameters
 #[derive(Debug, Clone)]
@@ -51,7 +50,7 @@ impl CmaEs {
     pub fn new(initial_params: &ContinuousParams, population_size: usize, seed: Option<u64>) -> Self {
         let dimension = 3; // clipping_percentile, scale_multiplier, qjl_threshold
         let lambda = population_size;
-        let mu = lambda / 2;
+        let mu = (lambda / 2).max(1);
 
         // Initialize mean from parameters
         let mean = vec![
@@ -61,13 +60,8 @@ impl CmaEs {
         ];
 
         // Strategy parameters (Hansen & Ostermeier, 2001)
-        let mu_eff = {
-            let weights: Vec<f64> = (0..mu)
-                .map(|i| (mu as f64 + 0.5).ln() - (i + 1) as f64)
-                .collect();
-            let sum_weights: f64 = weights.iter().sum();
-            sum_weights.powi(2) / weights.iter().map(|w| w.powi(2)).sum::<f64>()
-        };
+        let weights = Self::recombination_weights(mu);
+        let mu_eff = 1.0 / weights.iter().map(|w| w.powi(2)).sum::<f64>();
 
         let cc = (4.0 + mu_eff / dimension as f64) / (dimension as f64 + 4.0 + 2.0 * mu_eff / dimension as f64);
         let cs = (mu_eff + 2.0) / (dimension as f64 + mu_eff + 5.0);
@@ -78,10 +72,6 @@ impl CmaEs {
         // Expected norm of N(0,I)
         let chi_n = (dimension as f64).sqrt() *
                    (1.0 - 1.0 / (4.0 * dimension as f64) + 1.0 / (21.0 * dimension as f64 * dimension as f64));
-
-        let weights: Vec<f64> = (0..mu)
-            .map(|i| ((mu as f64 + 0.5).ln() - (i + 1) as f64).ln())
-            .collect();
 
         // Initialize covariance as identity matrix
         let mut covariance = vec![vec![0.0; dimension]; dimension];
@@ -240,6 +230,18 @@ impl CmaEs {
         self.sigma < 1e-12 || self.generation > 1000
     }
 
+    fn recombination_weights(mu: usize) -> Vec<f64> {
+        let raw_weights: Vec<f64> = (1..=mu)
+            .map(|rank| (mu as f64 + 0.5).ln() - (rank as f64).ln())
+            .collect();
+        let sum_weights = raw_weights.iter().sum::<f64>();
+
+        raw_weights
+            .into_iter()
+            .map(|weight| weight / sum_weights)
+            .collect()
+    }
+
     // Helper methods
     fn sample_standard_normal(&mut self) -> Vec<f64> {
         let normal = Normal::new(0.0, 1.0).unwrap();
@@ -274,6 +276,36 @@ impl CmaEs {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_close(actual: f64, expected: f64, tolerance: f64) {
+        assert!(
+            (actual - expected).abs() <= tolerance,
+            "expected {expected:.12}, got {actual:.12}",
+        );
+    }
+
+    #[test]
+    fn test_cmaes_recombination_weights_follow_standard_log_formula() {
+        let initial = ContinuousParams::default();
+        let cmaes = CmaEs::new(&initial, 10, Some(42));
+
+        let raw_weights: Vec<f64> = (1..=cmaes.mu)
+            .map(|rank| (cmaes.mu as f64 + 0.5).ln() - (rank as f64).ln())
+            .collect();
+        let sum_raw = raw_weights.iter().sum::<f64>();
+        let expected_weights: Vec<f64> = raw_weights.iter().map(|weight| weight / sum_raw).collect();
+
+        assert_eq!(cmaes.weights.len(), cmaes.mu);
+        assert!(cmaes.weights.iter().all(|weight| *weight > 0.0));
+        assert_close(cmaes.weights.iter().sum::<f64>(), 1.0, 1e-12);
+
+        for (actual, expected) in cmaes.weights.iter().zip(expected_weights.iter()) {
+            assert_close(*actual, *expected, 1e-12);
+        }
+
+        let expected_mu_eff = 1.0 / expected_weights.iter().map(|weight| weight.powi(2)).sum::<f64>();
+        assert_close(cmaes.mu_eff, expected_mu_eff, 1e-12);
+    }
 
     #[test]
     fn test_cmaes_basic_functionality() {

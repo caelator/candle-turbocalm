@@ -366,15 +366,32 @@ impl ShapeVerifier {
     /// Add autoencoder expected shapes
     fn add_autoencoder_expected_shapes(&mut self, config: &AutoencoderConfig) {
         // Add autoencoder-specific shape expectations
+        // Using tensor names that match the autoencoder loader (encoder.* and decoder.*)
         self.add_exact_shape(
-            "ae_model.encoder.embed_tokens.weight",
+            "encoder.embed_tokens.weight",
             vec![config.vocab_size as usize, config.hidden_size as usize],
         );
 
         self.add_exact_shape(
-            "ae_model.decoder.embed_tokens.weight",
+            "decoder.embed_tokens.weight",
             vec![config.vocab_size as usize, config.hidden_size as usize],
         );
+
+        // Add encoder layer norms
+        for layer_idx in 0..config.num_encoder_layers {
+            self.add_exact_shape(
+                &format!("encoder.layers.{}.norm.weight", layer_idx),
+                vec![config.hidden_size as usize],
+            );
+        }
+
+        // Add decoder layer norms
+        for layer_idx in 0..config.num_decoder_layers {
+            self.add_exact_shape(
+                &format!("decoder.layers.{}.norm.weight", layer_idx),
+                vec![config.hidden_size as usize],
+            );
+        }
     }
 }
 

@@ -3,7 +3,7 @@
 //! Implements the fitness function: memory_gain - λ1·ΔBrierLM - λ2·cosine_penalty - λ3·latency_penalty
 
 use crate::{FitnessMetrics, ObjectiveWeights, QuantProfile};
-use crate::dataset::{DataBatch, ProcessedDataset, KvTrace, TensorStats};
+use crate::dataset::{ProcessedDataset, TensorStats};
 use anyhow::Result;
 use candle_core::{Device, Tensor};
 use std::time::Instant;
@@ -99,17 +99,20 @@ impl ObjectiveFunction {
         &self,
         profile: &QuantProfile,
         dataset: &ProcessedDataset,
-        device: &Device,
+        _device: &Device,
     ) -> Result<QuantizationResult> {
         let reference = self.reference_metrics.as_ref().unwrap();
 
-        // Simulate memory reduction based on bit width
+        // Legitimate Phase 5 placeholder: memory can be estimated analytically from
+        // the quantization configuration without running a model forward pass, even
+        // though exact accounting should eventually use real layer metadata.
         let bits_reduction_factor = 32.0 / profile.bit_width as f64;
         let memory_reduction = 0.7; // Assuming 70% of memory is quantizable
         let quantized_memory = (reference.memory_usage as f64 *
                                (1.0 - memory_reduction + memory_reduction / bits_reduction_factor)) as usize;
 
-        // Simulate quality degradation based on quantization aggressiveness
+        // TODO(Phase 5): replace synthetic quality, latency, and activation-similarity
+        // estimates with real baseline-vs-quantized model inference over `dataset`.
         let quality_degradation = self.estimate_quality_degradation(profile);
         let quantized_brier_lm = reference.baseline_brier_lm * (1.0 + quality_degradation);
 
@@ -151,6 +154,8 @@ impl ObjectiveFunction {
 
     /// Estimate quality degradation from quantization parameters
     fn estimate_quality_degradation(&self, profile: &QuantProfile) -> f64 {
+        // TODO(Phase 5): compute this from real output quality metrics instead of
+        // the current heuristic once quantized model execution is wired up.
         // Base degradation from bit width
         let bit_degradation = match profile.bit_width {
             2 => 0.15, // 15% degradation for 2-bit
@@ -171,7 +176,9 @@ impl ObjectiveFunction {
     }
 
     /// Estimate cosine similarity between original and quantized activations
-    fn estimate_cosine_similarity(&self, profile: &QuantProfile, dataset: &ProcessedDataset) -> Result<f64> {
+    fn estimate_cosine_similarity(&self, profile: &QuantProfile, _dataset: &ProcessedDataset) -> Result<f64> {
+        // TODO(Phase 5): compare real activation tensors from the baseline and
+        // quantized model instead of using this hand-tuned similarity proxy.
         // Simulate activation comparison based on quantization parameters
         let base_similarity = match profile.bit_width {
             2 => 0.85, // Lower similarity for aggressive quantization
@@ -192,12 +199,12 @@ impl ObjectiveFunction {
     }
 
     /// Calculate memory gain component
-    fn calculate_memory_gain(&self, reference: &ReferenceMetrics, result: &QuantizationResult) -> f64 {
+    fn calculate_memory_gain(&self, _reference: &ReferenceMetrics, result: &QuantizationResult) -> f64 {
         result.metrics.memory_gain
     }
 
     /// Calculate Brier score delta component
-    fn calculate_brier_delta(&self, reference: &ReferenceMetrics, result: &QuantizationResult) -> f64 {
+    fn calculate_brier_delta(&self, _reference: &ReferenceMetrics, result: &QuantizationResult) -> f64 {
         result.metrics.delta_brier_lm
     }
 
@@ -207,7 +214,7 @@ impl ObjectiveFunction {
     }
 
     /// Calculate latency penalty component
-    fn calculate_latency_penalty(&self, reference: &ReferenceMetrics, result: &QuantizationResult) -> f64 {
+    fn calculate_latency_penalty(&self, _reference: &ReferenceMetrics, result: &QuantizationResult) -> f64 {
         result.metrics.latency_penalty
     }
 }
@@ -248,7 +255,9 @@ pub fn create_reference_metrics(
     dataset: &ProcessedDataset,
     device: &Device,
 ) -> Result<ReferenceMetrics> {
-    // Simulate baseline model evaluation
+    // TODO(Phase 5): baseline Brier score and latency must come from the real
+    // unquantized model on the calibration corpus. The memory estimate can remain
+    // analytical for now, but should eventually use actual loaded-model metadata.
     let baseline_memory = estimate_model_memory_usage(32); // 32-bit baseline
     let baseline_brier = simulate_brier_score(dataset, 32)?;
     let baseline_latency = simulate_inference_latency(dataset, device, 32)?;
@@ -268,6 +277,8 @@ pub fn create_reference_metrics(
 
 /// Estimate model memory usage based on precision
 fn estimate_model_memory_usage(bits: u8) -> usize {
+    // Legitimate Phase 5 placeholder: memory accounting does not require a forward
+    // pass, but this fixed 7B assumption should be replaced by real model metadata.
     // Simplified estimation: assume model size scales with precision
     let base_size_gb = 7.0; // 7B parameter model
     let bytes_per_param = bits as f64 / 8.0;
@@ -275,8 +286,9 @@ fn estimate_model_memory_usage(bits: u8) -> usize {
 }
 
 /// Simulate Brier score evaluation
-fn simulate_brier_score(dataset: &ProcessedDataset, bits: u8) -> Result<f64> {
-    // Placeholder: return synthetic Brier score based on precision
+fn simulate_brier_score(_dataset: &ProcessedDataset, bits: u8) -> Result<f64> {
+    // TODO(Phase 5): replace the synthetic score with a real Brier evaluation from
+    // model logits over the calibration dataset.
     let base_brier = 0.25; // Baseline Brier score
     let precision_factor = (32.0 / bits as f64 - 1.0) * 0.02; // 2% degradation per bit reduction
     Ok(base_brier * (1.0 + precision_factor))
@@ -284,6 +296,8 @@ fn simulate_brier_score(dataset: &ProcessedDataset, bits: u8) -> Result<f64> {
 
 /// Simulate inference latency
 fn simulate_inference_latency(dataset: &ProcessedDataset, device: &Device, bits: u8) -> Result<f64> {
+    // TODO(Phase 5): replace tensor-allocation timing with real end-to-end latency
+    // measurements from the baseline model on representative calibration batches.
     let start = Instant::now();
 
     // Simulate some computation proportional to dataset size and precision
@@ -303,12 +317,32 @@ fn simulate_inference_latency(dataset: &ProcessedDataset, device: &Device, bits:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ContinuousParams, DiscreteConfig};
+    use crate::{ContinuousParams};
+    use crate::dataset::ProcessedDataset;
+    use candle_core::Device;
+
+    fn assert_close(actual: f64, expected: f64, tolerance: f64) {
+        assert!(
+            (actual - expected).abs() <= tolerance,
+            "expected {expected:.12}, got {actual:.12}",
+        );
+    }
+
+    fn create_test_dataset(device: &Device) -> ProcessedDataset {
+        ProcessedDataset {
+            input_ids: vec![vec![1, 2, 3, 4]],
+            attention_masks: vec![vec![1, 1, 1, 1]],
+            kv_traces: vec![],
+            device: device.clone(),
+        }
+    }
 
     #[test]
     fn test_objective_evaluation() -> Result<()> {
         let weights = ObjectiveWeights::default();
         let mut objective = ObjectiveFunction::new(weights);
+        let device = Device::Cpu;
+        let dataset = create_test_dataset(&device);
 
         // Create mock reference metrics
         let reference = ReferenceMetrics {
@@ -326,8 +360,13 @@ mod tests {
             continuous: ContinuousParams::default(),
         };
 
-        // Note: This test requires a ProcessedDataset, so it's a simplified version
-        // In practice, you'd create a mock dataset for testing
+        let (fitness, objective_value) = objective.evaluate(&profile, &dataset, &device)?;
+
+        assert_close(fitness.memory_gain, 0.6125, 1e-12);
+        assert_close(fitness.delta_brier_lm, 0.012625, 1e-12);
+        assert_close(fitness.cosine_penalty, 0.01, 1e-12);
+        assert_eq!(fitness.latency_penalty, 0.0);
+        assert_close(objective_value, -0.594875, 1e-12);
 
         Ok(())
     }

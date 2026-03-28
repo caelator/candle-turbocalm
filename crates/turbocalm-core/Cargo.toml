@@ -22,3 +22,12 @@ hf-hub.workspace = true
 half.workspace = true
 tracing.workspace = true
 chrono = { version = "0.4", features = ["serde"] }
+
+[features]
+default = []
+integration = []
+metal = ["candle-core/metal"]
+
+[dev-dependencies]
+tempfile = "3.0"
+tokio = { version = "1.0", features = ["full"] }

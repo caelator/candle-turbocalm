@@ -1,4 +1,11 @@
 use clap::{Parser, Subcommand};
+use anyhow::Result;
+use candle_core::{DType, Tensor};
+use std::path::PathBuf;
+use turbocalm_core::{auto_device, DownloadUtils, TokenizerLoader, TokenizerType, TokenizerUtils, AutoencoderConfig};
+use turbocalm_models::{CalmAutoencoder, CalmAutoencoderConfig};
+use turbocalm_checkpoint::{run_convert_command, ConvertArgs, ConvertCommand};
+use turbocalm_checkpoint::convert::FromHubArgs;
 
 #[derive(Parser)]
 #[command(name = "turbocalm", about = "Candle-TurboCALM: Native CALM inference with TurboQuant compression")]
@@ -66,16 +73,13 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Inspect { model } => {
-            println!("Inspecting model: {model}");
-            todo!("Phase 0: checkpoint inspection")
+            inspect_model(&model)
         }
         Commands::Convert { model, output } => {
-            println!("Converting {model} -> {output}");
-            todo!("Phase 0: checkpoint conversion")
+            convert_checkpoint(&model, &output)
         }
         Commands::Encode { model, text } => {
-            println!("Encoding with {model}: {text}");
-            todo!("Phase 1: autoencoder encoding")
+            encode_text(&model, &text)
         }
         Commands::Score { model, text } => {
             println!("Scoring with {model}: {text}");
@@ -93,5 +97,231 @@ fn main() -> anyhow::Result<()> {
             println!("Benchmarking {model}");
             todo!("Phase 3: benchmarking")
         }
+    }
+}
+
+fn inspect_model(model_id: &str) -> Result<()> {
+    println!("Inspecting model: {}", model_id);
+
+    // Download the complete model (safetensors + config + tokenizer)
+    let download = DownloadUtils::download_complete_model(model_id)?;
+
+    println!("✓ Downloaded model files:");
+    for (i, path) in download.model_paths().iter().enumerate() {
+        println!("  - Model file {}: {}", i + 1, path.display());
+    }
+
+    if let Some(config_path) = download.config_path() {
+        println!("  - Config: {}", config_path.display());
+
+        // Try to load and display basic config info
+        if let Ok(config_content) = std::fs::read_to_string(config_path) {
+            if let Ok(config_json) = serde_json::from_str::<serde_json::Value>(&config_content) {
+                if let Some(model_type) = config_json.get("model_type") {
+                    println!("  - Model type: {}", model_type);
+                }
+                if let Some(vocab_size) = config_json.get("vocab_size") {
+                    println!("  - Vocab size: {}", vocab_size);
+                }
+                if let Some(hidden_size) = config_json.get("hidden_size") {
+                    println!("  - Hidden size: {}", hidden_size);
+                }
+            }
+        }
+    }
+
+    if let Some(tokenizer_path) = download.tokenizer_path() {
+        println!("  - Tokenizer: {}", tokenizer_path.display());
+    }
+
+    println!("\n✓ Model inspection complete");
+    Ok(())
+}
+
+fn convert_checkpoint(model_id: &str, output_path: &str) -> Result<()> {
+    println!("Converting {} -> {}", model_id, output_path);
+
+    let args = ConvertArgs {
+        command: ConvertCommand::FromHub(FromHubArgs {
+            model_id: model_id.to_string(),
+            output: Some(PathBuf::from(output_path)),
+            force: false,
+            skip_verification: false,
+            strict_verification: false,
+            manifest_dir: None,
+            calm_config: None,
+            autoencoder_config: None,
+            tags: Vec::new(),
+        }),
+    };
+
+    run_convert_command(args)?;
+
+    println!("✓ Conversion complete: {}", output_path);
+    Ok(())
+}
+
+fn encode_text(model_id: &str, text: &str) -> Result<()> {
+    println!("Encoding with {}: \"{}\"", model_id, text);
+
+    // 1. Load tokenizer
+    println!("Loading tokenizer...");
+    let tokenizer_loader = TokenizerLoader::new()?;
+    let tokenizer = tokenizer_loader.load_from_hub(model_id, TokenizerType::Llama)?;
+
+    // 2. Tokenize text
+    println!("Tokenizing text...");
+    let token_ids = TokenizerUtils::encode(&tokenizer, text, true)?;
+    println!("Token IDs: {:?}", token_ids);
+
+    // 3. Download model if needed and get config
+    println!("Downloading model files...");
+    let download = DownloadUtils::download_complete_model(model_id)?;
+
+    // 4. Load autoencoder config
+    let config = if let Some(config_path) = download.config_path() {
+        // Try to load as CalmAutoencoderConfig first
+        match CalmAutoencoderConfig::from_json_file(config_path) {
+            Ok(config) => config,
+            Err(_) => {
+                // If that fails, try to load as core AutoencoderConfig and convert
+                match AutoencoderConfig::from_json_file(config_path.to_str().unwrap()) {
+                    Ok(core_config) => {
+                        convert_autoencoder_config(&core_config)
+                    }
+                    Err(_) => {
+                        // Finally fall back to generic JSON parsing
+                        match std::fs::read_to_string(config_path) {
+                            Ok(content) => {
+                                if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&content) {
+                                    convert_to_calm_autoencoder_config(&json_value)
+                                } else {
+                                    println!("Failed to parse config, using default");
+                                    CalmAutoencoderConfig::default()
+                                }
+                            }
+                            Err(_) => {
+                                println!("Failed to read config file, using default");
+                                CalmAutoencoderConfig::default()
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        println!("No config found, using default CALM autoencoder config");
+        CalmAutoencoderConfig::default()
+    };
+
+    // 5. Load autoencoder weights from safetensors
+    println!("Loading autoencoder weights...");
+    let device = auto_device()?;
+    let safetensors_path = &download.model_paths()[0]; // Use first model file
+    let autoencoder = CalmAutoencoder::from_safetensors(safetensors_path, config, DType::F32, &device)?;
+
+    // 6. Create tensor from token IDs
+    let seq_len = token_ids.len(); let input_ids = Tensor::from_vec(token_ids, (1, seq_len), &device)?;
+
+    // 7. Run encoder to get pooled embedding
+    println!("Running encoder...");
+    let pooled_embedding = autoencoder.encode_pooled(&input_ids)?;
+
+    // 8. Print the embedding
+    println!("Pooled embedding shape: {:?}", pooled_embedding.dims());
+    let embedding_values: Vec<f32> = pooled_embedding.to_vec1()?;
+    println!("Pooled embedding values (first 10): {:?}", &embedding_values[..embedding_values.len().min(10)]);
+
+    println!("✓ Encoding complete");
+    Ok(())
+}
+
+/// Convert a generic JSON config to CalmAutoencoderConfig
+fn convert_to_calm_autoencoder_config(json_value: &serde_json::Value) -> CalmAutoencoderConfig {
+    let mut config = CalmAutoencoderConfig::default();
+
+    // Extract common fields if they exist
+    if let Some(vocab_size) = json_value.get("vocab_size").and_then(|v| v.as_u64()) {
+        config.vocab_size = vocab_size as usize;
+    }
+
+    if let Some(hidden_size) = json_value.get("hidden_size").and_then(|v| v.as_u64()) {
+        config.hidden_size = hidden_size as usize;
+    }
+
+    if let Some(intermediate_size) = json_value.get("intermediate_size").and_then(|v| v.as_u64()) {
+        config.intermediate_size = intermediate_size as usize;
+    }
+
+    if let Some(patch_size) = json_value.get("patch_size").and_then(|v| v.as_u64()) {
+        config.patch_size = patch_size as usize;
+    }
+
+    if let Some(latent_size) = json_value.get("latent_size").and_then(|v| v.as_u64()) {
+        config.latent_size = latent_size as usize;
+    }
+
+    if let Some(num_encoder_layers) = json_value.get("num_encoder_layers").and_then(|v| v.as_u64()) {
+        config.num_encoder_layers = num_encoder_layers as usize;
+    }
+
+    if let Some(num_decoder_layers) = json_value.get("num_decoder_layers").and_then(|v| v.as_u64()) {
+        config.num_decoder_layers = num_decoder_layers as usize;
+    }
+
+    if let Some(ae_dropout) = json_value.get("ae_dropout").and_then(|v| v.as_f64()) {
+        config.ae_dropout = ae_dropout;
+    }
+
+    if let Some(kl_clamp) = json_value.get("kl_clamp").and_then(|v| v.as_f64()) {
+        config.kl_clamp = kl_clamp;
+    }
+
+    if let Some(kl_weight) = json_value.get("kl_weight").and_then(|v| v.as_f64()) {
+        config.kl_weight = kl_weight;
+    }
+
+    if let Some(rms_norm_eps) = json_value.get("rms_norm_eps").and_then(|v| v.as_f64()) {
+        config.rms_norm_eps = rms_norm_eps;
+    }
+
+    if let Some(bos_token_id) = json_value.get("bos_token_id").and_then(|v| v.as_u64()) {
+        config.bos_token_id = bos_token_id as u32;
+    }
+
+    if let Some(eos_token_id) = json_value.get("eos_token_id").and_then(|v| v.as_u64()) {
+        config.eos_token_id = eos_token_id as u32;
+    }
+
+    if let Some(pad_token_id) = json_value.get("pad_token_id").and_then(|v| v.as_u64()) {
+        config.pad_token_id = Some(pad_token_id as u32);
+    }
+
+    config
+}
+
+/// Convert core AutoencoderConfig to CalmAutoencoderConfig
+fn convert_autoencoder_config(core_config: &AutoencoderConfig) -> CalmAutoencoderConfig {
+    CalmAutoencoderConfig {
+        ae_dropout: core_config.ae_dropout,
+        kl_clamp: core_config.kl_clamp,
+        kl_weight: core_config.kl_weight,
+        patch_size: core_config.patch_size as usize,
+        vocab_size: core_config.vocab_size as usize,
+        hidden_size: core_config.hidden_size as usize,
+        intermediate_size: core_config.intermediate_size as usize,
+        num_encoder_layers: core_config.num_encoder_layers as usize,
+        num_decoder_layers: core_config.num_decoder_layers as usize,
+        latent_size: core_config.latent_size as usize,
+        hidden_act: core_config.hidden_act.clone(),
+        max_position_embeddings: core_config.max_position_embeddings as usize,
+        initializer_range: core_config.initializer_range,
+        rms_norm_eps: core_config.rms_norm_eps,
+        pad_token_id: core_config.pad_token_id,
+        bos_token_id: core_config.bos_token_id,
+        eos_token_id: core_config.eos_token_id,
+        pretraining_tp: core_config.pretraining_tp as usize,
+        tie_word_embeddings: core_config.tie_word_embeddings,
+        mlp_bias: core_config.mlp_bias,
     }
 }

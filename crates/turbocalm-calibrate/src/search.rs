@@ -8,12 +8,11 @@ use crate::{
     CalibrationConfig, ContinuousParams, FitnessMetrics, QuantProfile,
     cmaes::CmaEs,
     dataset::ProcessedDataset,
-    objective::{BatchEvaluator, ObjectiveFunction, ReferenceMetrics, create_reference_metrics},
+    objective::{BatchEvaluator, create_reference_metrics},
     pareto::{ParetoFront, ParetoSolution},
 };
 use anyhow::Result;
 use candle_core::Device;
-use rand::{Rng, SeedableRng};
 use std::collections::HashMap;
 use tracing::{info, warn, debug};
 
@@ -207,7 +206,7 @@ impl CalibrationSearch {
         qjl_dim: usize,
         rotation_seed: u64,
         dataset: &ProcessedDataset,
-        progress_callback: &Option<Box<dyn Fn(&SearchProgress)>>,
+        _progress_callback: &Option<Box<dyn Fn(&SearchProgress)>>,
     ) -> Result<(ParetoSolution, usize)> {
         debug!("Starting CMA-ES for bit_width={}, qjl_dim={}, rotation_seed={}",
                bit_width, qjl_dim, rotation_seed);
@@ -385,42 +384,30 @@ impl SearchFactory {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dataset::{CalibrationDataset, CalibrationSample};
-
-    fn create_test_dataset() -> Result<ProcessedDataset> {
-        let samples = vec![
-            CalibrationSample {
-                text: "Hello world".to_string(),
-                metadata: None,
-            },
-            CalibrationSample {
-                text: "This is a test".to_string(),
-                metadata: None,
-            },
-        ];
-
-        let dataset = CalibrationDataset { samples };
-
-        // For testing, create a minimal processed dataset
-        // In practice, this would use a real tokenizer
-        use candle_core::{Device, Tensor};
-        let device = Device::Cpu;
-
-        Ok(ProcessedDataset {
-            input_ids: vec![vec![1, 2, 3], vec![4, 5, 6]],
-            attention_masks: vec![vec![1, 1, 1], vec![1, 1, 1]],
-            kv_traces: vec![],
-            device: device.clone(),
-        })
-    }
 
     #[test]
     fn test_search_factory() -> Result<()> {
         let device = Device::Cpu;
 
-        let _exhaustive = SearchFactory::create_exhaustive_search(device.clone(), Some(100))?;
-        let _focused = SearchFactory::create_focused_search(device.clone(), Some(4), Some(32))?;
-        let _rapid = SearchFactory::create_rapid_search(device)?;
+        let exhaustive = SearchFactory::create_exhaustive_search(device.clone(), Some(100))?;
+        assert_eq!(exhaustive.config.max_total_iterations, 100);
+        assert_eq!(exhaustive.config.max_cmaes_iterations, 50);
+        assert_eq!(exhaustive.config.cmaes_population_size, 10);
+
+        let focused = SearchFactory::create_focused_search(device.clone(), Some(4), Some(32))?;
+        assert_eq!(focused.config.discrete.bit_widths, vec![4]);
+        assert_eq!(focused.config.discrete.qjl_dims, vec![32]);
+        assert_eq!(focused.config.discrete.rotation_seeds, vec![42, 137, 256, 512]);
+        assert_eq!(focused.config.max_cmaes_iterations, 30);
+        assert_eq!(focused.config.max_total_iterations, 500);
+
+        let rapid = SearchFactory::create_rapid_search(device)?;
+        assert_eq!(rapid.config.discrete.bit_widths, vec![4]);
+        assert_eq!(rapid.config.discrete.qjl_dims, vec![32]);
+        assert_eq!(rapid.config.discrete.rotation_seeds, vec![42]);
+        assert_eq!(rapid.config.max_cmaes_iterations, 10);
+        assert_eq!(rapid.config.cmaes_population_size, 6);
+        assert_eq!(rapid.config.max_total_iterations, 100);
 
         Ok(())
     }
@@ -428,10 +415,12 @@ mod tests {
     #[test]
     fn test_discrete_config_count() -> Result<()> {
         let device = Device::Cpu;
-        let search = SearchFactory::create_exhaustive_search(device, Some(100))?;
+        let search = SearchFactory::create_exhaustive_search(device.clone(), Some(100))?;
+        let focused = SearchFactory::create_focused_search(device, Some(4), Some(32))?;
 
         let count = search.count_discrete_configs();
-        assert!(count > 0);
+        assert_eq!(count, 36);
+        assert_eq!(focused.count_discrete_configs(), 4);
 
         Ok(())
     }

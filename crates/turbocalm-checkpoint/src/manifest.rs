@@ -354,8 +354,8 @@ impl ManifestManager {
                 match CALMModelManifest::load_from_file(&path) {
                     Ok(manifest) => {
                         summaries.push(ModelSummary {
-                            model_id: manifest.metadata.model_id,
-                            model_name: manifest.metadata.model_name,
+                            model_id: manifest.metadata.model_id.clone(),
+                            model_name: manifest.metadata.model_name.clone(),
                             size_mb: manifest.total_size_mb(),
                             created_at: manifest.metadata.created_at,
                             manifest_path: path,

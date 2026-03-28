@@ -1,4 +1,4 @@
-use candle_core::{Result, Tensor, Device};
+use candle_core::{Result, Tensor};
 
 pub fn pack_bits(tensor: &Tensor, bits: u8) -> Result<Tensor> {
     let flattened = tensor.flatten_all()?.to_vec1::<u8>()?;
@@ -69,6 +69,7 @@ pub fn unpack_bits(tensor: &Tensor, bits: u8, original_shape: &[usize]) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use candle_core::Device;
     
     #[test]
     fn test_pack_unpack_4bit() -> Result<()> {

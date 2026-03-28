@@ -26,6 +26,7 @@ half.workspace = true
 tracing.workspace = true
 regex = "1.10"
 chrono = { version = "0.4", features = ["serde"] }
+dirs = "5.0"
 
 # Local crates
 turbocalm-core = { path = "../turbocalm-core" }

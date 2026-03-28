@@ -1,4 +1,4 @@
-use candle_core::{Device, Result, Tensor};
+use candle_core::{Result, Tensor};
 
 pub struct PolarQuantizer {
     pub bit_width: u8,
@@ -37,6 +37,7 @@ impl PolarQuantizer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use candle_core::Device;
     
     #[test]
     fn test_polar_quantize_dequantize() -> Result<()> {

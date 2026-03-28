@@ -323,14 +323,14 @@ impl CALMCheckpoint {
 pub struct KnownCALMModels;
 
 impl KnownCALMModels {
-    /// Get list of known CALM model IDs (example placeholders)
+    /// Get list of known CALM model IDs
     pub fn get_known_models() -> Vec<&'static str> {
         vec![
-            // These would be actual CALM model IDs once they're available
-            "meta-llama/Llama-2-7b-hf",  // Fallback to base Llama models
-            "meta-llama/Meta-Llama-3-8B",
-            // "calm-ai/calm-7b-v1",  // Future CALM models
-            // "calm-ai/calm-13b-v1",
+            // Actual CALM model IDs from HuggingFace
+            "cccczshao/CALM-Autoencoder",
+            "cccczshao/CALM-M",
+            "cccczshao/CALM-L",
+            "cccczshao/CALM-XL",
         ]
     }
 
