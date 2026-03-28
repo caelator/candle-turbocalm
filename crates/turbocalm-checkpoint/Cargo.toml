@@ -5,6 +5,30 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# Core dependencies
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+# Candle and tensor handling
+candle-core.workspace = true
+candle-nn.workspace = true
+safetensors.workspace = true
+
+# HuggingFace Hub integration
+hf-hub.workspace = true
+
+# CLI support for convert command
+clap.workspace = true
+
+# Utilities
+half.workspace = true
+tracing.workspace = true
+regex = "1.10"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Local crates
+turbocalm-core = { path = "../turbocalm-core" }
+
+[dev-dependencies]
+tempfile = "3.0"

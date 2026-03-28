@@ -5,6 +5,20 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# Core candle dependencies
+candle-core.workspace = true
+candle-nn.workspace = true
+
+# Serialization and configuration
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+
+# Tokenizer and HF hub functionality
+tokenizers.workspace = true
+hf-hub.workspace = true
+
+# Additional utilities
+half.workspace = true
+tracing.workspace = true
+chrono = { version = "0.4", features = ["serde"] }
