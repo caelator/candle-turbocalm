@@ -141,7 +141,7 @@ impl ProcessedDataset {
                 .map_err(|e| anyhow::anyhow!("Tokenization failed: {}", e))?;
 
             let mut tokens = encoding.get_ids().to_vec();
-            let original_len = tokens.len();
+            let _original_len = tokens.len();
 
             // Truncate or pad to max_length
             if tokens.len() > max_len {

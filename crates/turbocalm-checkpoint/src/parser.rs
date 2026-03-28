@@ -116,9 +116,25 @@ impl StateDictParser {
         }
 
         // If not safetensors, we'd need to implement proper PyTorch loading
-        // For now, return an error with suggestion
+        // For now, return an error with specific conversion instructions
         Err(anyhow::anyhow!(
-            "PyTorch .bin loading not fully implemented. Consider converting to safetensors first. File: {}",
+            "PyTorch .bin format is not supported. Please convert to safetensors format first.\n\
+            \n\
+            To convert using HuggingFace transformers:\n\
+            ```\n\
+            python -c \"from transformers import AutoTokenizer, AutoModel; \
+            model = AutoModel.from_pretrained('MODEL_ID'); \
+            model.save_pretrained('converted', safe_serialization=True)\"\n\
+            ```\n\
+            \n\
+            Or use the TurboCALM CLI:\n\
+            ```\n\
+            turbocalm convert --input {} --output {}.safetensors\n\
+            ```\n\
+            \n\
+            File: {}",
+            path.display(),
+            path.with_extension("").display(),
             path.display()
         ))
     }
@@ -295,7 +311,7 @@ impl StateDictParser {
         let mut total_size_bytes = 0usize;
         let mut dtype_counts: HashMap<String, usize> = HashMap::new();
 
-        for (name, tensor) in tensors {
+        for (_name, tensor) in tensors {
             let param_count = tensor.elem_count();
             let dtype_size = match tensor.dtype() {
                 DType::F32 => 4,

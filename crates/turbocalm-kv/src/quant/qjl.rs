@@ -1,4 +1,5 @@
-use candle_core::{Device, Result, Tensor};
+use anyhow::Result;
+use candle_core::{Device, Tensor};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -23,7 +24,7 @@ impl QjlProjector {
             data.push(rng.gen_range(-1.0f32..1.0f32));
         }
 
-        let projection_matrix = Tensor::from_vec(data, (original_dim, dim), device)?;
+        let projection_matrix = Tensor::from_vec(data, (original_dim, dim), device).map_err(anyhow::Error::from)?;
 
         Ok(Self {
             dim,
@@ -33,23 +34,23 @@ impl QjlProjector {
     }
 
     pub fn project(&self, residual: &Tensor) -> Result<(Tensor, Tensor)> {
-        let projected = residual.matmul(&self.projection_matrix)?;
+        let projected = residual.matmul(&self.projection_matrix).map_err(anyhow::Error::from)?;
         let threshold_tensor =
-            Tensor::new(self.threshold, residual.device())?.broadcast_as(projected.shape())?;
+            Tensor::new(self.threshold, residual.device()).map_err(anyhow::Error::from)?.broadcast_as(projected.shape()).map_err(anyhow::Error::from)?;
         let signs = projected
-            .ge(&threshold_tensor)?
-            .to_dtype(candle_core::DType::U8)?;
-        let scale = projected.abs()?.mean_keepdim(projected.rank() - 1)?;
+            .ge(&threshold_tensor).map_err(anyhow::Error::from)?
+            .to_dtype(candle_core::DType::U8).map_err(anyhow::Error::from)?;
+        let scale = projected.abs().map_err(anyhow::Error::from)?.mean_keepdim(projected.rank() - 1).map_err(anyhow::Error::from)?;
 
         Ok((signs, scale))
     }
 
     pub fn reconstruct(&self, signs: &Tensor, scale: &Tensor) -> Result<Tensor> {
-        let f_signs = signs.to_dtype(candle_core::DType::F32)?;
-        let mapped_signs = f_signs.affine(2.0, -1.0)?;
-        let scaled_projection = mapped_signs.broadcast_mul(scale)?;
+        let f_signs = signs.to_dtype(candle_core::DType::F32).map_err(anyhow::Error::from)?;
+        let mapped_signs = f_signs.affine(2.0, -1.0).map_err(anyhow::Error::from)?;
+        let scaled_projection = mapped_signs.broadcast_mul(scale).map_err(anyhow::Error::from)?;
 
-        scaled_projection.matmul(&self.projection_matrix.t()?)
+        Ok(scaled_projection.matmul(&self.projection_matrix.t().map_err(anyhow::Error::from)?).map_err(anyhow::Error::from)?)
     }
 }
 
@@ -63,11 +64,11 @@ mod tests {
         let projector = QjlProjector::new(16, 32, 123, 0.0, &device)?;
 
         let data: Vec<f32> = (0..64).map(|x| (x as f32 - 32.0) / 10.0).collect();
-        let residual = Tensor::from_vec(data, (2, 32), &device)?;
+        let residual = Tensor::from_vec(data, (2, 32), &device).map_err(anyhow::Error::from)?;
 
         let (signs, scale) = projector.project(&residual)?;
 
-        let signs_vec = signs.flatten_all()?.to_vec1::<u8>()?;
+        let signs_vec = signs.flatten_all().map_err(anyhow::Error::from)?.to_vec1::<u8>().map_err(anyhow::Error::from)?;
         for &s in &signs_vec {
             assert!(s == 0 || s == 1);
         }

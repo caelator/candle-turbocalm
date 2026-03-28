@@ -15,7 +15,7 @@ pub use config::{AutoencoderConfig, CALMConfig, RopeScaling};
 pub use device::{
     auto_device, cached_device, DeviceInfo, DevicePreference, DeviceSelector, DeviceType,
 };
-pub use error::{Result, TurboCALMError};
+pub use error::{AnyhowResult, Result, TurboCALMError};
 pub use hub::{CompleteModelDownload, DownloadManifest, DownloadUtils, HubClient};
 pub use metrics::{
     MemoryReporter, MemorySource, MemoryUsage, MetricsBundle, MetricsTracker, SimilarityMetrics,

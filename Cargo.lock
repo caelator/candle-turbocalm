@@ -3177,8 +3177,10 @@ name = "turbocalm-triumvirate"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "candle-core",
  "serde",
  "serde_json",
+ "turbocalm-models",
 ]
 
 [[package]]

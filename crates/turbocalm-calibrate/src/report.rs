@@ -3,9 +3,7 @@
 //! Generates comprehensive human-readable reports of calibration results
 //! with metrics, visualizations, and recommendations.
 
-use crate::profiles::{ProfileAnalysis, ProfileAnalyzer, ProfileCollection, ProfileEntry};
-use crate::search::SearchResults;
-use crate::{FitnessMetrics, QuantProfile};
+use crate::profiles::{ProfileAnalyzer, ProfileCollection, ProfileEntry};
 use anyhow::Result;
 use std::fmt::Write as FmtWrite;
 use std::fs::File;
@@ -330,7 +328,7 @@ impl ReportGenerator {
         &self,
         content: &mut String,
         profile: &ProfileEntry,
-        category: &str,
+        _category: &str,
     ) -> Result<()> {
         writeln!(content, "**Profile ID:** `{}`", profile.profile_id)?;
         writeln!(content)?;
@@ -570,7 +568,7 @@ impl ReportGenerator {
     }
 
     /// Write appendix
-    fn write_appendix(&self, content: &mut String, collection: &ProfileCollection) -> Result<()> {
+    fn write_appendix(&self, content: &mut String, _collection: &ProfileCollection) -> Result<()> {
         writeln!(content, "## Appendix")?;
         writeln!(content)?;
 

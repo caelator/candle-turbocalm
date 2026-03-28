@@ -1,4 +1,5 @@
-use candle_core::{Result, Tensor};
+use anyhow::Result;
+use candle_core::Tensor;
 
 pub struct PolarQuantizer {
     pub bit_width: u8,
@@ -21,7 +22,7 @@ impl PolarQuantizer {
         let max_val = match self.scale_mode.as_str() {
             "per_token" => {
                 // Current behavior: scale across last dimension (per-token)
-                tensor.abs()?.max_keepdim(tensor.rank() - 1)?
+                tensor.abs().map_err(anyhow::Error::from)?.max_keepdim(tensor.rank() - 1).map_err(anyhow::Error::from)?
             }
             "per_channel" => {
                 // New behavior: scale across channel dimension (typically second-to-last)
@@ -30,22 +31,22 @@ impl PolarQuantizer {
                 } else {
                     0
                 };
-                tensor.abs()?.max_keepdim(channel_dim)?
+                tensor.abs().map_err(anyhow::Error::from)?.max_keepdim(channel_dim).map_err(anyhow::Error::from)?
             }
             _ => {
                 // Fallback to per_token for unknown modes
-                tensor.abs()?.max_keepdim(tensor.rank() - 1)?
+                tensor.abs().map_err(anyhow::Error::from)?.max_keepdim(tensor.rank() - 1).map_err(anyhow::Error::from)?
             }
         };
-        let eps = Tensor::new(&[1e-5f32], tensor.device())?;
-        let scale = max_val.broadcast_maximum(&eps)?;
+        let eps = Tensor::new(&[1e-5f32], tensor.device()).map_err(anyhow::Error::from)?;
+        let scale = max_val.broadcast_maximum(&eps).map_err(anyhow::Error::from)?;
 
-        let normalized = tensor.broadcast_div(&scale)?;
+        let normalized = tensor.broadcast_div(&scale).map_err(anyhow::Error::from)?;
         let max_q = ((1 << self.bit_width) - 1) as f64;
 
-        let shifted = normalized.affine(0.5, 0.5)?;
-        let scaled_to_q = shifted.affine(max_q, 0.0)?;
-        let quantized = scaled_to_q.round()?;
+        let shifted = normalized.affine(0.5, 0.5).map_err(anyhow::Error::from)?;
+        let scaled_to_q = shifted.affine(max_q, 0.0).map_err(anyhow::Error::from)?;
+        let quantized = scaled_to_q.round().map_err(anyhow::Error::from)?;
 
         Ok((quantized, scale))
     }
@@ -53,10 +54,10 @@ impl PolarQuantizer {
     pub fn dequantize(&self, quantized: &Tensor, scale: &Tensor) -> Result<Tensor> {
         let max_q = ((1 << self.bit_width) - 1) as f64;
 
-        let scaled_back = quantized.affine(1.0 / max_q, 0.0)?;
-        let shifted_back = scaled_back.affine(2.0, -1.0)?;
+        let scaled_back = quantized.affine(1.0 / max_q, 0.0).map_err(anyhow::Error::from)?;
+        let shifted_back = scaled_back.affine(2.0, -1.0).map_err(anyhow::Error::from)?;
 
-        shifted_back.broadcast_mul(scale)
+        Ok(shifted_back.broadcast_mul(scale).map_err(anyhow::Error::from)?)
     }
 }
 
@@ -71,12 +72,12 @@ mod tests {
         let q = PolarQuantizer::new(8);
 
         let data = vec![-0.5f32, 0.1, 0.8, -1.2, 2.5, -0.01];
-        let tensor = Tensor::from_vec(data.clone(), (2, 3), &device)?;
+        let tensor = Tensor::from_vec(data.clone(), (2, 3), &device).map_err(anyhow::Error::from)?;
 
         let (quantized, scale) = q.quantize(&tensor)?;
         let dequantized = q.dequantize(&quantized, &scale)?;
 
-        let deq_vec = dequantized.flatten_all()?.to_vec1::<f32>()?;
+        let deq_vec = dequantized.flatten_all().map_err(anyhow::Error::from)?.to_vec1::<f32>().map_err(anyhow::Error::from)?;
 
         for (i, (&orig, &deq)) in data.iter().zip(deq_vec.iter()).enumerate() {
             let diff = (orig - deq).abs();
@@ -94,7 +95,7 @@ mod tests {
 
         // Create a 2x3 tensor where each row has different scales
         let data = vec![1.0f32, 2.0, 3.0, 10.0, 20.0, 30.0];
-        let tensor = Tensor::from_vec(data.clone(), (2, 3), &device)?;
+        let tensor = Tensor::from_vec(data.clone(), (2, 3), &device).map_err(anyhow::Error::from)?;
 
         // Test per_token quantization (scales across columns)
         let (quantized_pt, scale_pt) = q_per_token.quantize(&tensor)?;
@@ -105,8 +106,8 @@ mod tests {
         let dequantized_pc = q_per_channel.dequantize(&quantized_pc, &scale_pc)?;
 
         // Both should reconstruct reasonably well
-        let deq_pt_vec = dequantized_pt.flatten_all()?.to_vec1::<f32>()?;
-        let deq_pc_vec = dequantized_pc.flatten_all()?.to_vec1::<f32>()?;
+        let deq_pt_vec = dequantized_pt.flatten_all().map_err(anyhow::Error::from)?.to_vec1::<f32>().map_err(anyhow::Error::from)?;
+        let deq_pc_vec = dequantized_pc.flatten_all().map_err(anyhow::Error::from)?.to_vec1::<f32>().map_err(anyhow::Error::from)?;
 
         for (i, &orig) in data.iter().enumerate() {
             let diff_pt = (orig - deq_pt_vec[i]).abs();

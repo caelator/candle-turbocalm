@@ -3,7 +3,6 @@
 //! Evolutionary calibration engine for TurboQuant parameters using multi-objective optimization.
 //! Combines discrete parameter enumeration with continuous optimization via CMA-ES.
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 pub use turbocalm_core::{ContinuousParams, QuantProfile};
 

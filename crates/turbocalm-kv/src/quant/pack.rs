@@ -1,7 +1,8 @@
-use candle_core::{Result, Tensor};
+use anyhow::Result;
+use candle_core::Tensor;
 
 pub fn pack_bits(tensor: &Tensor, bits: u8) -> Result<Tensor> {
-    let flattened = tensor.flatten_all()?.to_vec1::<u8>()?;
+    let flattened = tensor.flatten_all().map_err(anyhow::Error::from)?.to_vec1::<u8>().map_err(anyhow::Error::from)?;
     let mut packed = Vec::new();
 
     if bits == 4 {
@@ -31,11 +32,11 @@ pub fn pack_bits(tensor: &Tensor, bits: u8) -> Result<Tensor> {
     }
 
     let packed_len = packed.len();
-    Tensor::from_vec(packed, (packed_len,), tensor.device())
+    Ok(Tensor::from_vec(packed, (packed_len,), tensor.device()).map_err(anyhow::Error::from)?)
 }
 
 pub fn unpack_bits(tensor: &Tensor, bits: u8, original_shape: &[usize]) -> Result<Tensor> {
-    let packed = tensor.to_vec1::<u8>()?;
+    let packed = tensor.to_vec1::<u8>().map_err(anyhow::Error::from)?;
     let mut unpacked = Vec::new();
 
     let target_elements = original_shape.iter().product::<usize>();
@@ -63,7 +64,7 @@ pub fn unpack_bits(tensor: &Tensor, bits: u8, original_shape: &[usize]) -> Resul
     }
 
     unpacked.truncate(target_elements);
-    Tensor::from_vec(unpacked, original_shape, tensor.device())
+    Ok(Tensor::from_vec(unpacked, original_shape, tensor.device()).map_err(anyhow::Error::from)?)
 }
 
 #[cfg(test)]
@@ -75,13 +76,13 @@ mod tests {
     fn test_pack_unpack_4bit() -> Result<()> {
         let device = Device::Cpu;
         let data: Vec<u8> = vec![5, 12, 0, 15, 3, 8];
-        let tensor = Tensor::from_vec(data.clone(), (2, 3), &device)?;
+        let tensor = Tensor::from_vec(data.clone(), (2, 3), &device).map_err(anyhow::Error::from)?;
 
         let packed = pack_bits(&tensor, 4)?;
         assert_eq!(packed.dims(), &[3]);
 
         let unpacked = unpack_bits(&packed, 4, &[2, 3])?;
-        let unpacked_vec = unpacked.to_vec2::<u8>()?;
+        let unpacked_vec = unpacked.to_vec2::<u8>().map_err(anyhow::Error::from)?;
 
         assert_eq!(unpacked_vec[0], vec![5, 12, 0]);
         assert_eq!(unpacked_vec[1], vec![15, 3, 8]);
@@ -93,13 +94,13 @@ mod tests {
     fn test_pack_unpack_1bit() -> Result<()> {
         let device = Device::Cpu;
         let data: Vec<u8> = vec![1, 0, 1, 1, 0, 0, 1, 0, 1, 1];
-        let tensor = Tensor::from_vec(data.clone(), (10,), &device)?;
+        let tensor = Tensor::from_vec(data.clone(), (10,), &device).map_err(anyhow::Error::from)?;
 
         let packed = pack_bits(&tensor, 1)?;
         assert_eq!(packed.dims(), &[2]);
 
         let unpacked = unpack_bits(&packed, 1, &[10])?;
-        let unpacked_vec = unpacked.to_vec1::<u8>()?;
+        let unpacked_vec = unpacked.to_vec1::<u8>().map_err(anyhow::Error::from)?;
 
         assert_eq!(unpacked_vec, data);
 

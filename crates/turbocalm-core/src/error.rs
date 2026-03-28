@@ -299,8 +299,13 @@ impl From<TensorError> for TurboCALMError {
     }
 }
 
-/// Result type for turbocalm-core operations
+// anyhow::Error automatically converts from any std::error::Error type, including TurboCALMError
+
+/// Internal Result type for turbocalm-core operations
 pub type Result<T> = std::result::Result<T, TurboCALMError>;
+
+/// Public Result type for turbocalm-core operations (standardized on anyhow)
+pub type AnyhowResult<T> = anyhow::Result<T>;
 
 /// Convenience macros for creating errors
 #[macro_export]

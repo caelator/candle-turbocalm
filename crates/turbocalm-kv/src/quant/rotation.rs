@@ -1,4 +1,5 @@
-use candle_core::{Device, Result, Tensor};
+use anyhow::Result;
+use candle_core::{Device, Tensor};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -31,7 +32,7 @@ pub fn generate_orthogonal_matrix(dim: usize, seed: u64, device: &Device) -> Res
     }
 
     let flat_basis: Vec<f32> = basis.into_iter().flatten().collect();
-    Tensor::from_vec(flat_basis, (dim, dim), device)
+    Ok(Tensor::from_vec(flat_basis, (dim, dim), device)?)
 }
 
 #[cfg(test)]
@@ -44,9 +45,9 @@ mod tests {
         let dim = 16;
         let q = generate_orthogonal_matrix(dim, 42, &device)?;
 
-        let qt = q.t()?;
-        let identity_approx = qt.matmul(&q)?;
-        let identity_vec = identity_approx.flatten_all()?.to_vec1::<f32>()?;
+        let qt = q.t().map_err(anyhow::Error::from)?;
+        let identity_approx = qt.matmul(&q).map_err(anyhow::Error::from)?;
+        let identity_vec = identity_approx.flatten_all().map_err(anyhow::Error::from)?.to_vec1::<f32>().map_err(anyhow::Error::from)?;
 
         for i in 0..dim {
             for j in 0..dim {

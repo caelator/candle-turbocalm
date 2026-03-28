@@ -1,9 +1,8 @@
 use anyhow::Result;
-use hf_hub::api::sync::Api;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
-use turbocalm_core::{CompleteModelDownload, DownloadManifest, HubClient};
+use turbocalm_core::{CompleteModelDownload, HubClient};
 
 /// Specialized checkpoint downloader for CALM models
 pub struct CheckpointDownloader {

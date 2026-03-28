@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Configuration for CALM (Continuous Autoregressive Language Model)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

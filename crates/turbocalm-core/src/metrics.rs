@@ -245,19 +245,44 @@ impl MemoryReporter {
     fn get_macos_rss_mb() -> f64 {
         use std::process::Command;
 
-        // Use ps to get memory usage
+        // Use ps to get memory usage for current process
+        let pid = std::process::id().to_string();
+
+        // Try multiple approaches for robustness
+
+        // Approach 1: Use ps with RSS
         if let Ok(output) = Command::new("ps")
-            .args(&["-o", "rss", "-p", &std::process::id().to_string()])
+            .args(&["-o", "rss=", "-p", &pid])  // Use rss= to get only the value without header
             .output()
         {
             if let Ok(output_str) = String::from_utf8(output.stdout) {
-                if let Some(line) = output_str.lines().nth(1) {
-                    if let Ok(rss_kb) = line.trim().parse::<f64>() {
-                        return rss_kb / 1024.0; // Convert KB to MB
+                if let Some(rss_str) = output_str.lines().next() {
+                    if let Ok(rss_kb) = rss_str.trim().parse::<f64>() {
+                        if rss_kb > 0.0 {
+                            return rss_kb / 1024.0; // Convert KB to MB
+                        }
                     }
                 }
             }
         }
+
+        // Approach 2: Fallback to ps with VSZ (virtual memory size) if RSS fails
+        if let Ok(output) = Command::new("ps")
+            .args(&["-o", "vsz=", "-p", &pid])
+            .output()
+        {
+            if let Ok(output_str) = String::from_utf8(output.stdout) {
+                if let Some(vsz_str) = output_str.lines().next() {
+                    if let Ok(vsz_kb) = vsz_str.trim().parse::<f64>() {
+                        if vsz_kb > 0.0 {
+                            // VSZ is usually higher than RSS, so use a conservative estimate
+                            return (vsz_kb * 0.5) / 1024.0; // Convert KB to MB with conservative factor
+                        }
+                    }
+                }
+            }
+        }
+
         0.0
     }
 
@@ -267,12 +292,49 @@ impl MemoryReporter {
 
         if let Ok(output) = Command::new("vm_stat").output() {
             if let Ok(output_str) = String::from_utf8(output.stdout) {
-                // Parse vm_stat output (simplified)
-                // This would need more sophisticated parsing in practice
-                return 1024.0; // Placeholder
+                let lines: Vec<&str> = output_str.lines().collect();
+
+                // Parse page size from the first line
+                // Example: "Mach Virtual Memory Statistics: (page size of 16384 bytes)"
+                let page_size = if let Some(first_line) = lines.first() {
+                    if let Some(start) = first_line.find("page size of ") {
+                        let size_str = &first_line[start + 13..];
+                        if let Some(end) = size_str.find(" bytes") {
+                            size_str[..end].parse::<u64>().unwrap_or(16384)
+                        } else {
+                            16384
+                        }
+                    } else {
+                        16384
+                    }
+                } else {
+                    16384
+                };
+
+                let mut free_pages = 0u64;
+                let mut inactive_pages = 0u64;
+
+                // Parse the output to extract free and inactive pages
+                for line in lines {
+                    if line.starts_with("Pages free:") {
+                        if let Some(value_str) = line.split(':').nth(1) {
+                            let clean_str = value_str.trim().trim_end_matches('.');
+                            free_pages = clean_str.parse::<u64>().unwrap_or(0);
+                        }
+                    } else if line.starts_with("Pages inactive:") {
+                        if let Some(value_str) = line.split(':').nth(1) {
+                            let clean_str = value_str.trim().trim_end_matches('.');
+                            inactive_pages = clean_str.parse::<u64>().unwrap_or(0);
+                        }
+                    }
+                }
+
+                // Calculate available memory: (free + inactive) * page_size converted to MB
+                let available_bytes = (free_pages + inactive_pages) * page_size;
+                return available_bytes as f64 / (1024.0 * 1024.0);
             }
         }
-        1024.0
+        1024.0 // Fallback if parsing fails
     }
 
     #[cfg(target_os = "linux")]

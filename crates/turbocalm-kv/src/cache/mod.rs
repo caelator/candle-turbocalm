@@ -4,7 +4,8 @@ use crate::quant::pack::{pack_bits, unpack_bits};
 use crate::quant::polar::PolarQuantizer;
 use crate::quant::qjl::QjlProjector;
 use crate::quant::rotation::generate_orthogonal_matrix;
-use candle_core::{DType, Device, Result, Tensor};
+use anyhow::Result;
+use candle_core::{DType, Device, Tensor};
 use turbocalm_core::QuantProfile;
 
 pub trait KvCache {
@@ -85,7 +86,7 @@ impl TurboKvCache {
         }
         let dim = shape[rank - 1];
         let num_elements: usize = shape[0..rank - 1].iter().product();
-        let reshaped = tensor.reshape((num_elements, dim))?;
+        let reshaped = tensor.reshape((num_elements, dim)).map_err(anyhow::Error::from)?;
         Ok((reshaped, shape))
     }
 
@@ -97,14 +98,14 @@ impl TurboKvCache {
         let mut new_shape = original_shape.to_vec();
         let len = new_shape.len();
         new_shape[len - 1] = new_last_dim;
-        tensor.reshape(new_shape.as_slice())
+        Ok(tensor.reshape(new_shape.as_slice()).map_err(anyhow::Error::from)?)
     }
 
     fn compress_tensor(&mut self, tensor: &Tensor) -> Result<CompressedTensor> {
         let dims = tensor.dims();
         let dim = *dims
             .last()
-            .ok_or_else(|| candle_core::Error::Msg("Empty tensor".to_string()))?;
+            .ok_or_else(|| anyhow::Error::msg("Empty tensor"))?;
         self.init_if_needed(dim, tensor.device())?;
 
         let rot = self.rotation_matrix.as_ref().unwrap();
@@ -114,19 +115,19 @@ impl TurboKvCache {
         let (flat_tensor, original_shape) = Self::flatten_for_matmul(tensor)?;
 
         // Apply rotation
-        let rotated = flat_tensor.matmul(rot)?;
+        let rotated = flat_tensor.matmul(rot).map_err(anyhow::Error::from)?;
 
         // Polar quantization
         let (quantized_flat, q_scale_flat) = self.polar_quantizer.quantize(&rotated)?;
         let quantized_shape = quantized_flat.dims().to_vec();
         let packed_quantized =
-            pack_bits(&quantized_flat.to_dtype(DType::U8)?, self.profile.bit_width)?;
+            pack_bits(&quantized_flat.to_dtype(DType::U8).map_err(anyhow::Error::from)?, self.profile.bit_width)?;
 
         // Compute residual
         let dequantized_flat = self
             .polar_quantizer
             .dequantize(&quantized_flat, &q_scale_flat)?;
-        let residual_flat = rotated.broadcast_sub(&dequantized_flat)?;
+        let residual_flat = rotated.broadcast_sub(&dequantized_flat).map_err(anyhow::Error::from)?;
 
         // QJL projection
         let (signs_flat, r_scale_flat) = qjl.project(&residual_flat)?;
@@ -150,18 +151,18 @@ impl TurboKvCache {
     ) -> Result<Tensor> {
         // Reconstruct from polar
         let unpacked_quantized = unpack_bits(&comp.quantized, bit_width, &comp.quantized_shape)?
-            .to_dtype(comp.q_scale.dtype())?;
+            .to_dtype(comp.q_scale.dtype()).map_err(anyhow::Error::from)?;
         let dequantized_flat = polar_quantizer.dequantize(&unpacked_quantized, &comp.q_scale)?;
 
         // Reconstruct from QJL
         let recon_residual_flat = qjl.reconstruct(&comp.signs, &comp.r_scale)?;
 
         // Add residual
-        let reconstructed_rotated_flat = dequantized_flat.broadcast_add(&recon_residual_flat)?;
+        let reconstructed_rotated_flat = dequantized_flat.broadcast_add(&recon_residual_flat).map_err(anyhow::Error::from)?;
 
         // Inverse rotation (rot is orthogonal, so rot.t() is inverse)
-        let rot_t = rot.t()?;
-        let reconstructed_flat = reconstructed_rotated_flat.matmul(&rot_t)?;
+        let rot_t = rot.t().map_err(anyhow::Error::from)?;
+        let reconstructed_flat = reconstructed_rotated_flat.matmul(&rot_t).map_err(anyhow::Error::from)?;
 
         // Unflatten
         let dim = comp.original_shape.last().unwrap();
@@ -170,21 +171,21 @@ impl TurboKvCache {
 
     fn cat_dim(rank: usize) -> Result<usize> {
         if rank < 1 {
-            return Err(candle_core::Error::Msg("Invalid tensor rank".to_string()));
+            return Err(anyhow::Error::msg("Invalid tensor rank"));
         }
         Ok(if rank >= 2 { rank - 2 } else { 0 })
     }
 
     fn concat_tensors(tensors: &[Tensor]) -> Result<Tensor> {
         if tensors.is_empty() {
-            return Err(candle_core::Error::Msg("KV Cache is empty".to_string()));
+            return Err(anyhow::Error::msg("KV Cache is empty"));
         }
         if tensors.len() == 1 {
             return Ok(tensors[0].clone());
         }
         let cat_dim = Self::cat_dim(tensors[0].dims().len())?;
         let refs = tensors.iter().collect::<Vec<_>>();
-        Tensor::cat(&refs, cat_dim)
+        Ok(Tensor::cat(&refs, cat_dim).map_err(anyhow::Error::from)?)
     }
 
     fn update_uncompressed_cache(
@@ -196,7 +197,7 @@ impl TurboKvCache {
         cache: &mut IncrementalTensorCache,
     ) -> Result<Tensor> {
         if compressed.is_empty() {
-            return Err(candle_core::Error::Msg("KV Cache is empty".to_string()));
+            return Err(anyhow::Error::msg("KV Cache is empty"));
         }
 
         if cache.decompressed_entries < compressed.len() {
@@ -215,7 +216,7 @@ impl TurboKvCache {
             cache.concatenated = Some(match &cache.concatenated {
                 Some(prefix) => {
                     let cat_dim = Self::cat_dim(prefix.dims().len())?;
-                    Tensor::cat(&[prefix, &new_suffix], cat_dim)?
+                    Tensor::cat(&[prefix, &new_suffix], cat_dim).map_err(anyhow::Error::from)?
                 }
                 None => new_suffix,
             });
@@ -226,7 +227,7 @@ impl TurboKvCache {
             .concatenated
             .as_ref()
             .cloned()
-            .ok_or_else(|| candle_core::Error::Msg("KV Cache is empty".to_string()))
+            .ok_or_else(|| anyhow::Error::msg("KV Cache is empty"))
     }
 }
 
@@ -243,11 +244,11 @@ impl KvCache for TurboKvCache {
         let rot = self
             .rotation_matrix
             .as_ref()
-            .ok_or_else(|| candle_core::Error::Msg("Uninitialized".to_string()))?;
+            .ok_or_else(|| anyhow::Error::msg("Uninitialized"))?;
         let qjl = self
             .qjl_projector
             .as_ref()
-            .ok_or_else(|| candle_core::Error::Msg("Uninitialized".to_string()))?;
+            .ok_or_else(|| anyhow::Error::msg("Uninitialized"))?;
         Self::update_uncompressed_cache(
             &self.polar_quantizer,
             self.profile.bit_width,
@@ -262,11 +263,11 @@ impl KvCache for TurboKvCache {
         let rot = self
             .rotation_matrix
             .as_ref()
-            .ok_or_else(|| candle_core::Error::Msg("Uninitialized".to_string()))?;
+            .ok_or_else(|| anyhow::Error::msg("Uninitialized"))?;
         let qjl = self
             .qjl_projector
             .as_ref()
-            .ok_or_else(|| candle_core::Error::Msg("Uninitialized".to_string()))?;
+            .ok_or_else(|| anyhow::Error::msg("Uninitialized"))?;
         Self::update_uncompressed_cache(
             &self.polar_quantizer,
             self.profile.bit_width,
@@ -296,7 +297,7 @@ mod tests {
         for i in 0..num_elements {
             data.push((i as f32 * 0.123).sin() * 2.0);
         }
-        Tensor::from_vec(data, shape, device)
+        Ok(Tensor::from_vec(data, shape, device).map_err(anyhow::Error::from)?)
     }
 
     #[test]

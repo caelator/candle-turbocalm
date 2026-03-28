@@ -1109,7 +1109,7 @@ impl CalmGenerationModel {
 
     /// Convert latent patches to patch embeddings for the transformer
     fn latent_patches_to_embeddings(&self, latent_patches: &Tensor) -> Result<Tensor> {
-        let (batch_size, num_patches, latent_size) = latent_patches.dims3()?;
+        let (_batch_size, _num_patches, latent_size) = latent_patches.dims3()?;
         let hidden_size = self.config.hidden_size as usize;
 
         if latent_size != self.config.latent_size as usize {
@@ -1178,12 +1178,11 @@ fn repeat_kv(hidden_states: &Tensor, repeats: usize) -> Result<Tensor> {
 }
 
 fn validate_temperature(temperature: f64) -> Result<()> {
-    if !(0.0 < temperature && temperature <= 1.0) {
-        bail!("temperature must be in the range (0, 1], got {temperature}");
+    if temperature <= 0.0 {
+        bail!("temperature must be positive, got {temperature}");
     }
-    let reciprocal = 1.0 / temperature;
-    if (reciprocal - reciprocal.round()).abs() > 1e-9 {
-        bail!("temperature must be the reciprocal of an integer, got {temperature}");
+    if !temperature.is_finite() {
+        bail!("temperature must be finite (not NaN or infinite), got {temperature}");
     }
     Ok(())
 }
@@ -1277,9 +1276,28 @@ mod tests {
     }
 
     #[test]
-    fn temperature_validation_rejects_non_reciprocal_values() {
-        let err = validate_temperature(0.3).unwrap_err();
-        assert!(err.to_string().contains("reciprocal"));
+    fn temperature_validation_rejects_invalid_values() {
+        // Test negative temperature
+        let err = validate_temperature(-0.5).unwrap_err();
+        assert!(err.to_string().contains("positive"));
+
+        // Test zero temperature
+        let err = validate_temperature(0.0).unwrap_err();
+        assert!(err.to_string().contains("positive"));
+
+        // Test NaN
+        let err = validate_temperature(f64::NAN).unwrap_err();
+        assert!(err.to_string().contains("finite"));
+
+        // Test infinity
+        let err = validate_temperature(f64::INFINITY).unwrap_err();
+        assert!(err.to_string().contains("finite"));
+
+        // Test that valid temperatures work
+        assert!(validate_temperature(0.3).is_ok());
+        assert!(validate_temperature(0.7).is_ok());
+        assert!(validate_temperature(1.0).is_ok());
+        assert!(validate_temperature(2.0).is_ok());
     }
 
     #[test]

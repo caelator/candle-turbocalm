@@ -122,7 +122,7 @@ impl CalmLanguageModel {
         offset: usize,
     ) -> Result<Tensor> {
         // Convert latent patches to patch embeddings
-        let (batch_size, num_patches, latent_size) = latent_input.dims3()?;
+        let (_batch_size, _num_patches, latent_size) = latent_input.dims3()?;
         let hidden_size = self.config.hidden_size;
 
         if latent_size != self.config.latent_size {

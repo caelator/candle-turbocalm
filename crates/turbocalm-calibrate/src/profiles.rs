@@ -3,11 +3,9 @@
 //! Handles serialization of calibration results to safetensors format
 //! for integration with the turbocalm quantization pipeline.
 
-use crate::pareto::ParetoSolution;
 use crate::search::SearchResults;
-use crate::{ContinuousParams, FitnessMetrics, QuantProfile};
+use crate::{FitnessMetrics, QuantProfile};
 use anyhow::{Context, Result};
-use safetensors::{SafeTensorError, SafeTensors};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;

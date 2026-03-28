@@ -29,6 +29,39 @@ turbocalm generate --model cccczshao/CALM-M --prompt "Once upon a time" --max-to
 turbocalm calibrate --model cccczshao/CALM-M --corpus ./calibration/corpus.jsonl --profile balanced
 ```
 
+## Checkpoint Format Support
+
+TurboCALM supports the following checkpoint formats:
+
+### ✅ Supported Formats
+- **Safetensors** (`.safetensors`) — Recommended format, natively supported
+- **HuggingFace Hub models** — Automatically downloads and converts if needed
+
+### ⚠️ Conversion Required
+- **PyTorch checkpoints** (`.bin`, `.pth`) — Must be converted to safetensors first
+
+### Converting PyTorch Checkpoints
+
+If you encounter a "PyTorch .bin format is not supported" error, convert your checkpoint:
+
+**Option 1: Using HuggingFace transformers**
+```python
+from transformers import AutoTokenizer, AutoModel
+model = AutoModel.from_pretrained('MODEL_ID')
+model.save_pretrained('converted', safe_serialization=True)
+```
+
+**Option 2: Using TurboCALM CLI**
+```bash
+turbocalm convert --model path/to/model.bin --output converted_model.safetensors
+```
+
+**Why safetensors?**
+- Safer memory mapping with bounds checking
+- Faster loading with zero-copy deserialization
+- Better cross-platform compatibility
+- Smaller file sizes with built-in compression
+
 ## Architecture
 
 ```
