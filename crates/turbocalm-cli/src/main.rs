@@ -3,7 +3,7 @@ use turbocalm_core::{CALMConfig, hub::convenience, auto_device, TokenizerLoader,
 use turbocalm_checkpoint::{CheckpointDownloader, StateDictParser, RemappingPresets};
 use turbocalm_models::{CalmAutoencoder, CalmAutoencoderConfig, CalmLanguageModel, CalmLmConfig, CalmGenerationModel, CalmGenerationConfig};
 use turbocalm_calibrate::{dataset::CalibrationDataset, search::SearchFactory, profiles::ProfileExporter};
-use turbocalm_kv::cache::{DenseKvCache, TurboKvCache};
+use turbocalm_kv::cache::{dense::DenseKvCache, TurboKvCache};
 use candle_core::{DType, Tensor};
 use candle_nn::VarBuilder;
 
@@ -596,7 +596,7 @@ fn main() -> anyhow::Result<()> {
             println!("  Norm Energy:       {:.6}", energy_score.1);
 
             println!("\n⚠️  Note: This demo uses zeroed weights. For meaningful energy scores,");
-            println!("   real model weights would need to be downloaded and loaded.")
+            println!("   real model weights would need to be downloaded and loaded.");
 
             Ok(())
         }
@@ -838,6 +838,7 @@ fn main() -> anyhow::Result<()> {
 
             // Create CalibrationSearch with the specified profile
             println!("⚙️ Setting up calibration search with '{}' profile...", profile);
+            let device_info = format!("{:?}", device);
             let mut search = match profile.as_str() {
                 "rapid" => {
                     match SearchFactory::create_rapid_search(device) {
@@ -884,7 +885,7 @@ fn main() -> anyhow::Result<()> {
             println!("  Model:             {}", model);
             println!("  Corpus:            {} ({} samples)", corpus, dataset.samples.len());
             println!("  Profile:           {}", profile);
-            println!("  Device:            {:?}", device);
+            println!("  Device:            {:?}", device_info);
 
             println!("\n⚠️  Note: Full calibration search requires:");
             println!("   • Processed dataset with model weights for evaluation");
@@ -973,7 +974,7 @@ fn main() -> anyhow::Result<()> {
                 ..Default::default()
             };
 
-            let autoencoder = match CalmAutoencoder::load(var_builder.clone(), autoencoder_config) {
+            let autoencoder = match CalmAutoencoder::load(var_builder.clone(), autoencoder_config.clone()) {
                 Ok(ae) => {
                     println!("✅ Created autoencoder");
                     ae
