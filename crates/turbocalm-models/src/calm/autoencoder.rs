@@ -447,17 +447,35 @@ impl CalmAutoencoder {
         config.validate()?;
 
         let vb = if prefix.is_empty() { vb } else { vb.pp(prefix) };
-        let embedding_weight = Self::load_embedding_weight(&vb, &config)?;
-        let encoder =
-            CalmAutoencoderEncoder::load(vb.pp("encoder"), &config, embedding_weight.clone())?;
-        let lm_head = Linear::new(embedding_weight, None);
-        let decoder = CalmAutoencoderDecoder::load(vb.pp("decoder"), &config, lm_head)?;
 
-        Ok(Self {
-            config,
-            encoder,
-            decoder,
-        })
+        if config.tie_word_embeddings {
+            // Current behavior: shared embeddings
+            let embedding_weight = Self::load_embedding_weight(&vb, &config)?;
+            let encoder =
+                CalmAutoencoderEncoder::load(vb.pp("encoder"), &config, embedding_weight.clone())?;
+            let lm_head = Linear::new(embedding_weight, None);
+            let decoder = CalmAutoencoderDecoder::load(vb.pp("decoder"), &config, lm_head)?;
+
+            Ok(Self {
+                config,
+                encoder,
+                decoder,
+            })
+        } else {
+            // Separate embeddings for encoder and decoder
+            let encoder_embedding_weight = Self::load_encoder_embedding_weight(&vb, &config)?;
+            let encoder = CalmAutoencoderEncoder::load(vb.pp("encoder"), &config, encoder_embedding_weight)?;
+
+            let decoder_embedding_weight = Self::load_decoder_embedding_weight(&vb, &config)?;
+            let lm_head = Linear::new(decoder_embedding_weight, None);
+            let decoder = CalmAutoencoderDecoder::load(vb.pp("decoder"), &config, lm_head)?;
+
+            Ok(Self {
+                config,
+                encoder,
+                decoder,
+            })
+        }
     }
 
     fn load_embedding_weight(vb: &VarBuilder, config: &CalmAutoencoderConfig) -> Result<Tensor> {
@@ -476,6 +494,32 @@ impl CalmAutoencoder {
                 .context("failed to load decoder.lm_head.weight")
         } else {
             bail!("autoencoder checkpoint is missing shared embedding weights")
+        }
+    }
+
+    fn load_encoder_embedding_weight(vb: &VarBuilder, config: &CalmAutoencoderConfig) -> Result<Tensor> {
+        let shape = (config.vocab_size, config.hidden_size);
+        if vb.contains_tensor("encoder.embed_tokens.weight") {
+            vb.pp("encoder")
+                .get(shape, "embed_tokens.weight")
+                .context("failed to load encoder.embed_tokens.weight")
+        } else {
+            bail!("autoencoder checkpoint is missing encoder embedding weights")
+        }
+    }
+
+    fn load_decoder_embedding_weight(vb: &VarBuilder, config: &CalmAutoencoderConfig) -> Result<Tensor> {
+        let shape = (config.vocab_size, config.hidden_size);
+        if vb.contains_tensor("decoder.lm_head.weight") {
+            vb.pp("decoder")
+                .get(shape, "lm_head.weight")
+                .context("failed to load decoder.lm_head.weight")
+        } else if vb.contains_tensor("decoder.lm_head_weight") {
+            vb.pp("decoder")
+                .get(shape, "lm_head_weight")
+                .context("failed to load decoder.lm_head_weight")
+        } else {
+            bail!("autoencoder checkpoint is missing decoder embedding weights")
         }
     }
 
@@ -611,6 +655,64 @@ mod tests {
 
         let logits = model.decode(&latent_states)?;
         assert_eq!(logits.dims(), &[2, 12, config.vocab_size]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_tied_embeddings() -> Result<()> {
+        let config = CalmAutoencoderConfig {
+            vocab_size: 32,
+            hidden_size: 16,
+            intermediate_size: 40,
+            latent_size: 8,
+            tie_word_embeddings: true,
+            ..Default::default()
+        };
+
+        // This should work with tied embeddings (default behavior)
+        let model = test_model(config)?;
+
+        // Verify the model loads successfully
+        let encoder_weights = model.encoder.embedding_weight();
+        assert_eq!(encoder_weights.dims(), &[32, 16]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_untied_embeddings() -> Result<()> {
+        let device = Device::Cpu;
+        let vb = VarBuilder::zeros(DType::F32, &device);
+
+        // Test that untied embeddings configuration is properly handled
+        let config_tied = CalmAutoencoderConfig {
+            vocab_size: 32,
+            hidden_size: 16,
+            intermediate_size: 40,
+            latent_size: 8,
+            tie_word_embeddings: true,
+            ..Default::default()
+        };
+
+        let config_untied = CalmAutoencoderConfig {
+            vocab_size: 32,
+            hidden_size: 16,
+            intermediate_size: 40,
+            latent_size: 8,
+            tie_word_embeddings: false,
+            ..Default::default()
+        };
+
+        // Both configurations should load successfully with VarBuilder::zeros
+        // The key difference is the internal structure, which we can verify by
+        // checking that the models can be created with different tie_word_embeddings settings
+        let model_tied = CalmAutoencoder::load(vb.clone(), config_tied)?;
+        let model_untied = CalmAutoencoder::load(vb, config_untied)?;
+
+        // Both models should be created successfully
+        assert_eq!(model_tied.config.tie_word_embeddings, true);
+        assert_eq!(model_untied.config.tie_word_embeddings, false);
 
         Ok(())
     }

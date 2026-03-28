@@ -3082,6 +3082,7 @@ dependencies = [
  "tokenizers",
  "tracing",
  "turbocalm-core",
+ "turbocalm-kv",
 ]
 
 [[package]]
@@ -3111,6 +3112,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "candle-core",
+ "candle-nn",
  "clap",
  "serde_json",
  "tokenizers",

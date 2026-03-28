@@ -389,4 +389,149 @@ mod tests {
         assert!(best.scale_multiplier >= 0.1 && best.scale_multiplier <= 10.0);
         assert!(best.qjl_threshold >= 1e-6 && best.qjl_threshold <= 1e-2);
     }
+
+    #[test]
+    fn test_cmaes_mu_equals_one() {
+        // Test mu=1 (minimum parent size) — verify no NaN
+        let initial = ContinuousParams::default();
+        let mut cmaes = CmaEs::new(&initial, 2, Some(42)); // lambda=2, mu=1
+
+        assert_eq!(cmaes.mu, 1);
+        assert_eq!(cmaes.weights.len(), 1);
+        assert_close(cmaes.weights[0], 1.0, 1e-12); // Single weight should be 1.0
+        assert!(cmaes.weights[0].is_finite());
+        assert!(!cmaes.weights[0].is_nan());
+
+        // Test ask-tell cycle with mu=1
+        let population = cmaes.ask();
+        assert_eq!(population.len(), 2);
+
+        let fitness = vec![1.0, 2.0]; // Simple fitness values
+        cmaes.tell(&population, &fitness).unwrap();
+
+        // Verify no NaN/Inf in state after tell
+        assert!(cmaes.sigma.is_finite());
+        assert!(!cmaes.sigma.is_nan());
+        assert!(cmaes.mean.iter().all(|&x| x.is_finite()));
+        assert!(cmaes.pc.iter().all(|&x| x.is_finite()));
+        assert!(cmaes.ps.iter().all(|&x| x.is_finite()));
+
+        let best = cmaes.current_best();
+        assert!(best.clipping_percentile.is_finite());
+        assert!(best.scale_multiplier.is_finite());
+        assert!(best.qjl_threshold.is_finite());
+    }
+
+    #[test]
+    fn test_cmaes_convergence_detection() {
+        // Test convergence detection
+        let initial = ContinuousParams::default();
+        let mut cmaes = CmaEs::new(&initial, 4, Some(42));
+
+        // Initially should not be converged
+        assert!(!cmaes.has_converged());
+
+        // Force small sigma to trigger convergence
+        cmaes.sigma = 1e-13;
+        assert!(cmaes.has_converged());
+
+        // Reset and test generation-based convergence
+        cmaes.sigma = 1.0;
+        cmaes.generation = 1001;
+        assert!(cmaes.has_converged());
+    }
+
+    #[test]
+    fn test_cmaes_100_iterations_no_nan_inf() {
+        // Test that ask→tell cycle works for 100 iterations without NaN/Inf
+        let initial = ContinuousParams::default();
+        let mut cmaes = CmaEs::new(&initial, 6, Some(42));
+
+        for iteration in 0..100 {
+            let population = cmaes.ask();
+            assert_eq!(population.len(), 6);
+
+            // Simple quadratic fitness function
+            let fitness: Vec<f64> = population
+                .iter()
+                .map(|params| {
+                    let x1 = (params.clipping_percentile - 0.95).powi(2);
+                    let x2 = (params.scale_multiplier - 1.0).powi(2);
+                    let x3 = (params.qjl_threshold - 1e-4).powi(2) * 1e8;
+                    x1 + x2 + x3
+                })
+                .collect();
+
+            cmaes.tell(&population, &fitness).unwrap();
+
+            // Verify no NaN/Inf in any iteration
+            assert!(cmaes.sigma.is_finite(), "Iteration {}: sigma is not finite", iteration);
+            assert!(!cmaes.sigma.is_nan(), "Iteration {}: sigma is NaN", iteration);
+            assert!(cmaes.mean.iter().all(|&x| x.is_finite()), "Iteration {}: mean contains non-finite values", iteration);
+            assert!(cmaes.pc.iter().all(|&x| x.is_finite()), "Iteration {}: pc contains non-finite values", iteration);
+            assert!(cmaes.ps.iter().all(|&x| x.is_finite()), "Iteration {}: ps contains non-finite values", iteration);
+
+            // Check covariance matrix
+            for row in &cmaes.covariance {
+                assert!(row.iter().all(|&x| x.is_finite()), "Iteration {}: covariance contains non-finite values", iteration);
+            }
+
+            // Verify current best is valid
+            let best = cmaes.current_best();
+            assert!(best.clipping_percentile.is_finite() && best.clipping_percentile >= 0.01 && best.clipping_percentile <= 0.99);
+            assert!(best.scale_multiplier.is_finite() && best.scale_multiplier >= 0.1 && best.scale_multiplier <= 10.0);
+            assert!(best.qjl_threshold.is_finite() && best.qjl_threshold >= 1e-6 && best.qjl_threshold <= 1e-2);
+        }
+    }
+
+    #[test]
+    fn test_cmaes_extreme_parameter_values() {
+        // Test edge case: very large/small parameter values
+        let initial = ContinuousParams {
+            clipping_percentile: 0.01, // Near lower bound
+            scale_multiplier: 10.0,    // Near upper bound
+            qjl_threshold: 1e-6,       // Near lower bound
+        };
+        let mut cmaes = CmaEs::new(&initial, 4, Some(42));
+
+        let population = cmaes.ask();
+        assert_eq!(population.len(), 4);
+
+        // Test with extreme fitness values
+        let fitness = vec![1e-10, 1e10, -1e10, f64::EPSILON];
+
+        // This should not panic or produce NaN/Inf
+        cmaes.tell(&population, &fitness).unwrap();
+
+        // Verify state is still valid
+        assert!(cmaes.sigma.is_finite());
+        assert!(cmaes.mean.iter().all(|&x| x.is_finite()));
+
+        let best = cmaes.current_best();
+        assert!(best.clipping_percentile >= 0.01 && best.clipping_percentile <= 0.99);
+        assert!(best.scale_multiplier >= 0.1 && best.scale_multiplier <= 10.0);
+        assert!(best.qjl_threshold >= 1e-6 && best.qjl_threshold <= 1e-2);
+
+        // Test with another extreme starting point
+        let extreme_initial = ContinuousParams {
+            clipping_percentile: 0.99, // Near upper bound
+            scale_multiplier: 0.1,     // Near lower bound
+            qjl_threshold: 1e-2,       // Near upper bound
+        };
+        let mut extreme_cmaes = CmaEs::new(&extreme_initial, 4, Some(123));
+
+        let extreme_population = extreme_cmaes.ask();
+        let extreme_fitness = vec![f64::MAX / 1e10, f64::MIN_POSITIVE * 1e10, 1.0, 0.0];
+
+        // This should also work without issues
+        extreme_cmaes.tell(&extreme_population, &extreme_fitness).unwrap();
+
+        assert!(extreme_cmaes.sigma.is_finite());
+        assert!(extreme_cmaes.mean.iter().all(|&x| x.is_finite()));
+
+        let extreme_best = extreme_cmaes.current_best();
+        assert!(extreme_best.clipping_percentile >= 0.01 && extreme_best.clipping_percentile <= 0.99);
+        assert!(extreme_best.scale_multiplier >= 0.1 && extreme_best.scale_multiplier <= 10.0);
+        assert!(extreme_best.qjl_threshold >= 1e-6 && extreme_best.qjl_threshold <= 1e-2);
+    }
 }

@@ -29,7 +29,7 @@ impl Default for CalmGenerationConfig {
         Self {
             max_new_tokens: 256,
             temperature: 0.5,
-            num_samples: 200,
+            num_samples: 16,
             seed: 0,
         }
     }

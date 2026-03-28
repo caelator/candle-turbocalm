@@ -112,11 +112,11 @@ impl ProfileExporter {
         let json_path = self.output_dir.join(format!("profiles_{}.json", timestamp));
         self.save_as_json(&collection, &json_path)?;
 
-        // Save to safetensors (efficient binary)
-        let safetensors_path = self
+        // Save to additional JSON format (for compatibility)
+        let compact_json_path = self
             .output_dir
-            .join(format!("profiles_{}.safetensors", timestamp));
-        self.save_as_safetensors(&collection, &safetensors_path)?;
+            .join(format!("profiles_{}_compact.json", timestamp));
+        self.save_as_compact_json(&collection, &compact_json_path)?;
 
         // Save individual best profile for easy access
         let best_profile_path = self.output_dir.join("best_profile.json");
@@ -125,10 +125,10 @@ impl ProfileExporter {
         tracing::info!(
             "Exported {} profiles to {:?}",
             collection.profiles.len(),
-            safetensors_path
+            compact_json_path
         );
 
-        Ok(safetensors_path)
+        Ok(compact_json_path)
     }
 
     /// Import profiles from safetensors
@@ -205,35 +205,16 @@ impl ProfileExporter {
         Ok(())
     }
 
-    /// Save collection as safetensors
-    fn save_as_safetensors<P: AsRef<Path>>(
+    /// Save collection as compact JSON format
+    fn save_as_compact_json<P: AsRef<Path>>(
         &self,
         collection: &ProfileCollection,
         path: P,
     ) -> Result<()> {
-        // Convert profiles to tensor-like format for safetensors
-        let mut data_map = HashMap::new();
-
-        // Serialize metadata
-        let metadata_bytes = serde_json::to_vec(&collection.metadata)?;
-        data_map.insert("metadata".to_string(), metadata_bytes);
-
-        // Serialize each profile
-        for (idx, profile_entry) in collection.profiles.iter().enumerate() {
-            let profile_key = format!("profile_{}", idx);
-            let profile_bytes = serde_json::to_vec(profile_entry)?;
-            data_map.insert(profile_key, profile_bytes);
-        }
-
-        // Serialize best profile
-        let best_profile_bytes = serde_json::to_vec(&collection.best_profile)?;
-        data_map.insert("best_profile".to_string(), best_profile_bytes);
-
-        // Convert to safetensors format using a different approach to avoid lifetime issues
-        // For now, just save as JSON since SafeTensors has complex lifetime requirements
+        // Save as compact JSON (not pretty-printed)
         let json_data = serde_json::to_vec(&collection)?;
         std::fs::write(path.as_ref(), &json_data)
-            .with_context(|| format!("Failed to write safetensors file: {:?}", path.as_ref()))?;
+            .with_context(|| format!("Failed to write compact JSON file: {:?}", path.as_ref()))?;
 
         Ok(())
     }
