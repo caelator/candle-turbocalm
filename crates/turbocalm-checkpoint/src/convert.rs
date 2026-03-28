@@ -1,15 +1,16 @@
 use anyhow::{Context, Result};
+use candle_core::{DType, Tensor};
 use clap::{Args, Subcommand};
 use std::path::{Path, PathBuf};
-use tracing::{error, info, warn};
-use turbocalm_core::{auto_device, CALMConfig, AutoencoderConfig};
+use tracing::{info, warn};
+use turbocalm_core::{auto_device, AutoencoderConfig, CALMConfig};
 
 use crate::{
-    download::{CheckpointDownloader, CALMCheckpoint},
-    parser::StateDictParser,
-    remapping::{RemappingPresets, TensorNameRemapper},
-    verification::ShapeVerifier,
+    download::CheckpointDownloader,
     manifest::{CALMModelManifest, ManifestManager},
+    parser::StateDictParser,
+    remapping::RemappingPresets,
+    verification::ShapeVerifier,
 };
 
 /// Convert command arguments
@@ -177,7 +178,8 @@ impl ConvertHandler {
 
         // Download checkpoint
         let downloader = CheckpointDownloader::new()?;
-        let checkpoint = downloader.download_calm_checkpoint(&args.model_id)
+        let checkpoint = downloader
+            .download_calm_checkpoint(&args.model_id)
             .with_context(|| format!("Failed to download model: {}", args.model_id))?;
 
         // Determine output directory
@@ -194,19 +196,23 @@ impl ConvertHandler {
         };
 
         let autoencoder_config = if let Some(config_path) = args.autoencoder_config {
-            Some(AutoencoderConfig::from_json_file(config_path.to_str().unwrap())?)
+            Some(AutoencoderConfig::from_json_file(
+                config_path.to_str().unwrap(),
+            )?)
         } else {
             Some(checkpoint.autoencoder_config())
         };
 
         // Parse model tensors
         let parser = StateDictParser::new(self.device.clone());
-        let tensors = parser.parse_model_files(checkpoint.model_paths())
+        let tensors = parser
+            .parse_model_files(checkpoint.model_paths())
             .with_context(|| "Failed to parse model tensors")?;
 
         // Apply tensor name remapping
         let remapper = RemappingPresets::huggingface_llama_to_calm();
-        let remapped_tensors = remapper.remap_tensors(tensors)
+        let remapped_tensors = remapper
+            .remap_tensors(tensors)
             .with_context(|| "Failed to remap tensor names")?;
 
         // Verify shapes if requested
@@ -242,12 +248,13 @@ impl ConvertHandler {
         let config_content = std::fs::read_to_string(&args.config)
             .with_context(|| format!("Failed to read config file: {}", args.config.display()))?;
 
-        let calm_config: CALMConfig = serde_json::from_str(&config_content)
-            .with_context(|| "Failed to parse CALM config")?;
+        let calm_config: CALMConfig =
+            serde_json::from_str(&config_content).with_context(|| "Failed to parse CALM config")?;
 
         // Parse model tensors
         let parser = StateDictParser::new(self.device.clone());
-        let tensors = parser.parse_model_files(&args.input_files)
+        let tensors = parser
+            .parse_model_files(&args.input_files)
             .with_context(|| "Failed to parse model tensors")?;
 
         // Apply tensor name remapping
@@ -256,12 +263,16 @@ impl ConvertHandler {
             "calm-to-huggingface-llama" => RemappingPresets::calm_to_huggingface_llama(),
             "identity" => RemappingPresets::identity(),
             _ => {
-                warn!("Unknown remapping preset: {}, using identity", args.remapping);
+                warn!(
+                    "Unknown remapping preset: {}, using identity",
+                    args.remapping
+                );
                 RemappingPresets::identity()
             }
         };
 
-        let remapped_tensors = remapper.remap_tensors(tensors)
+        let remapped_tensors = remapper
+            .remap_tensors(tensors)
             .with_context(|| "Failed to remap tensor names")?;
 
         // Verify shapes if requested
@@ -293,7 +304,9 @@ impl ConvertHandler {
     fn list_models(&self, args: ListArgs) -> Result<()> {
         info!("Listing converted models");
 
-        let summaries = self.manifest_manager.list_manifests()
+        let summaries = self
+            .manifest_manager
+            .list_manifests()
             .with_context(|| "Failed to list manifests")?;
 
         if summaries.is_empty() {
@@ -340,7 +353,8 @@ impl ConvertHandler {
             }
         }
 
-        self.manifest_manager.delete_manifest(&args.model_name, args.delete_files)
+        self.manifest_manager
+            .delete_manifest(&args.model_name, args.delete_files)
             .with_context(|| format!("Failed to delete model: {}", args.model_name))?;
 
         info!("Successfully deleted model: {}", args.model_name);
@@ -380,11 +394,8 @@ impl ConvertHandler {
         };
 
         // Create manifest
-        let mut manifest = CALMModelManifest::new(
-            model_id,
-            calm_config.clone(),
-            autoencoder_config.cloned(),
-        );
+        let mut manifest =
+            CALMModelManifest::new(model_id, calm_config.clone(), autoencoder_config.cloned());
 
         // Add files to manifest
         manifest.add_safetensors_file("model.safetensors", &safetensors_path, None);
@@ -396,13 +407,17 @@ impl ConvertHandler {
 
         // Add verification results if available
         if let Some(verification) = verification_report {
-            let verification_summary = crate::manifest::VerificationSummary::from_verification_report(verification);
+            let verification_summary =
+                crate::manifest::VerificationSummary::from_verification_report(verification);
             manifest.set_verification_results(verification_summary);
 
             if verification.passed() {
                 info!("Shape verification passed");
             } else {
-                warn!("Shape verification failed with {} errors", verification.error_count);
+                warn!(
+                    "Shape verification failed with {} errors",
+                    verification.error_count
+                );
             }
         }
 
@@ -419,7 +434,7 @@ impl ConvertHandler {
     /// Save tensors as safetensors file
     pub fn save_tensors_as_safetensors(
         &self,
-        tensors: &std::collections::HashMap<String, candle_core::Tensor>,
+        tensors: &std::collections::HashMap<String, Tensor>,
         output_path: &Path,
     ) -> Result<()> {
         info!("Saving {} tensors to safetensors format", tensors.len());
@@ -428,34 +443,87 @@ impl ConvertHandler {
         let mut safetensor_data = std::collections::HashMap::new();
 
         for (name, tensor) in tensors {
-            // Convert tensor to bytes
-            let tensor_data = tensor.to_dtype(candle_core::DType::F32)?;
-            let raw_data = tensor_data.flatten_all()?.to_vec1::<f32>()?;
-            let bytes: Vec<u8> = raw_data.iter()
-                .flat_map(|&f| f.to_le_bytes())
-                .collect();
+            let (dtype, shape, bytes) = tensor_to_safetensors_parts(tensor)?;
 
-            // Get shape and dtype info
-            let shape: Vec<usize> = tensor.shape().dims().to_vec();
-
-            safetensor_data.insert(
-                name.clone(),
-                (safetensors::Dtype::F32, shape, bytes),
-            );
+            safetensor_data.insert(name.clone(), (dtype, shape, bytes));
         }
 
         // Serialize to safetensors format using tensor_tools
-        let st_data: std::collections::HashMap<String, safetensors::tensor::TensorView<'_>> = safetensor_data
-            .iter()
-            .map(|(name, (dtype, shape, data))| {
-                (name.clone(), safetensors::tensor::TensorView::new(*dtype, shape.clone(), data).unwrap())
-            })
-            .collect();
-        safetensors::serialize_to_file(&st_data, &None, output_path)
-            .with_context(|| format!("Failed to write safetensors file: {}", output_path.display()))?;
+        let st_data: std::collections::HashMap<String, safetensors::tensor::TensorView<'_>> =
+            safetensor_data
+                .iter()
+                .map(|(name, (dtype, shape, data))| {
+                    (
+                        name.clone(),
+                        safetensors::tensor::TensorView::new(*dtype, shape.clone(), data).unwrap(),
+                    )
+                })
+                .collect();
+        safetensors::serialize_to_file(&st_data, &None, output_path).with_context(|| {
+            format!(
+                "Failed to write safetensors file: {}",
+                output_path.display()
+            )
+        })?;
 
         info!("Safetensors file saved: {}", output_path.display());
         Ok(())
+    }
+}
+
+fn tensor_to_safetensors_parts(
+    tensor: &Tensor,
+) -> Result<(safetensors::Dtype, Vec<usize>, Vec<u8>)> {
+    let dtype = tensor.dtype();
+    let shape = tensor.shape().dims().to_vec();
+    let flat_tensor = tensor.flatten_all()?;
+
+    let bytes = match dtype {
+        DType::U8 => flat_tensor.to_vec1::<u8>()?,
+        DType::U32 => flat_tensor
+            .to_vec1::<u32>()?
+            .into_iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect(),
+        DType::I64 => flat_tensor
+            .to_vec1::<i64>()?
+            .into_iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect(),
+        DType::BF16 => flat_tensor
+            .to_vec1::<half::bf16>()?
+            .into_iter()
+            .flat_map(|value| value.to_bits().to_le_bytes())
+            .collect(),
+        DType::F16 => flat_tensor
+            .to_vec1::<half::f16>()?
+            .into_iter()
+            .flat_map(|value| value.to_bits().to_le_bytes())
+            .collect(),
+        DType::F32 => flat_tensor
+            .to_vec1::<f32>()?
+            .into_iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect(),
+        DType::F64 => flat_tensor
+            .to_vec1::<f64>()?
+            .into_iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect(),
+    };
+
+    Ok((candle_dtype_to_safetensors_dtype(dtype), shape, bytes))
+}
+
+fn candle_dtype_to_safetensors_dtype(dtype: DType) -> safetensors::Dtype {
+    match dtype {
+        DType::U8 => safetensors::Dtype::U8,
+        DType::U32 => safetensors::Dtype::U32,
+        DType::I64 => safetensors::Dtype::I64,
+        DType::BF16 => safetensors::Dtype::BF16,
+        DType::F16 => safetensors::Dtype::F16,
+        DType::F32 => safetensors::Dtype::F32,
+        DType::F64 => safetensors::Dtype::F64,
     }
 }
 
@@ -490,7 +558,7 @@ mod tests {
 
     #[test]
     fn test_save_tensors_as_safetensors() -> Result<()> {
-        use candle_core::{Device, DType, Tensor};
+        use candle_core::{DType, Device, Tensor};
         use std::collections::HashMap;
 
         let temp_dir = TempDir::new()?;
@@ -506,6 +574,57 @@ mod tests {
 
         assert!(output_path.exists());
         assert!(output_path.metadata()?.len() > 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_save_tensors_preserves_dtype() -> Result<()> {
+        use candle_core::{Device, Tensor};
+        use half::{bf16, f16};
+        use std::collections::HashMap;
+
+        let temp_dir = TempDir::new()?;
+        let handler = ConvertHandler::new(Some(temp_dir.path().to_path_buf()))?;
+
+        let f16_values = [f16::from_f32(1.0), f16::from_f32(-2.5)];
+        let bf16_values = [bf16::from_f32(3.25), bf16::from_f32(-4.5)];
+
+        let mut tensors = HashMap::new();
+        tensors.insert(
+            "f16_weight".to_string(),
+            Tensor::from_slice(&f16_values, (2,), &Device::Cpu)?,
+        );
+        tensors.insert(
+            "bf16_weight".to_string(),
+            Tensor::from_slice(&bf16_values, (2,), &Device::Cpu)?,
+        );
+
+        let output_path = temp_dir.path().join("preserve_dtype.safetensors");
+        handler.save_tensors_as_safetensors(&tensors, &output_path)?;
+
+        let file_bytes = std::fs::read(&output_path)?;
+        let safetensors = safetensors::SafeTensors::deserialize(&file_bytes)?;
+
+        let f16_tensor = safetensors.tensor("f16_weight")?;
+        assert_eq!(f16_tensor.dtype(), safetensors::Dtype::F16);
+        assert_eq!(
+            f16_tensor.data(),
+            &f16_values
+                .iter()
+                .flat_map(|value| value.to_bits().to_le_bytes())
+                .collect::<Vec<u8>>()
+        );
+
+        let bf16_tensor = safetensors.tensor("bf16_weight")?;
+        assert_eq!(bf16_tensor.dtype(), safetensors::Dtype::BF16);
+        assert_eq!(
+            bf16_tensor.data(),
+            &bf16_values
+                .iter()
+                .flat_map(|value| value.to_bits().to_le_bytes())
+                .collect::<Vec<u8>>()
+        );
 
         Ok(())
     }

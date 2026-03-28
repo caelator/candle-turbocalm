@@ -27,9 +27,9 @@ chrono = { version = "0.4", features = ["serde"] }
 metal = "0.27"
 
 [features]
-default = []
+default = ["metal"]
 integration = []
-metal = ["candle-core/metal"]
+metal = []
 
 [dev-dependencies]
 tempfile = "3.0"

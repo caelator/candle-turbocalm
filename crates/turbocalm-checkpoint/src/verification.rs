@@ -1,8 +1,8 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use candle_core::{Shape, Tensor};
 use std::collections::HashMap;
-use tracing::{debug, info, warn, error};
-use turbocalm_core::{CALMConfig, AutoencoderConfig};
+use tracing::{debug, error, info, warn};
+use turbocalm_core::{AutoencoderConfig, CALMConfig};
 
 /// Shape verification utility for validating tensor shapes against model configurations
 pub struct ShapeVerifier {
@@ -102,7 +102,10 @@ impl ShapeVerifier {
         }
 
         if warning_count > 0 {
-            warn!("Shape verification completed with {} warnings", warning_count);
+            warn!(
+                "Shape verification completed with {} warnings",
+                warning_count
+            );
         }
 
         info!(
@@ -155,9 +158,7 @@ impl ShapeVerifier {
                     ))
                 }
             }
-            ExpectedShape::Constrained(constraints) => {
-                self.check_constraints(constraints, actual)
-            }
+            ExpectedShape::Constrained(constraints) => self.check_constraints(constraints, actual),
             ExpectedShape::Pattern(pattern) => self.check_pattern(pattern, actual),
         }
     }
@@ -249,7 +250,10 @@ impl ShapeVerifier {
                     ))
                 }
             }
-            ShapePattern::Embedding { vocab_size, embed_dim } => {
+            ShapePattern::Embedding {
+                vocab_size,
+                embed_dim,
+            } => {
                 let dims = actual.dims();
                 if dims.len() == 2 && dims[0] == *vocab_size && dims[1] == *embed_dim {
                     VerificationStatus::Pass
@@ -296,23 +300,24 @@ impl ShapeVerifier {
 
     /// Add CALM model expected shapes
     fn add_calm_expected_shapes(&mut self, config: &CALMConfig) {
+        let hidden_size = config.hidden_size as usize;
+        let head_dim = hidden_size / config.num_attention_heads as usize;
+        let kv_hidden_size = config.num_key_value_heads() as usize * head_dim;
+
         // Embedding layer
         self.add_exact_shape(
             "transformer.embed_tokens.weight",
-            vec![config.vocab_size as usize, config.hidden_size as usize],
+            vec![config.vocab_size as usize, hidden_size],
         );
 
         // Output layer
         self.add_exact_shape(
             "lm_head.weight",
-            vec![config.vocab_size as usize, config.hidden_size as usize],
+            vec![config.vocab_size as usize, hidden_size],
         );
 
         // Layer norm
-        self.add_exact_shape(
-            "transformer.norm.weight",
-            vec![config.hidden_size as usize],
-        );
+        self.add_exact_shape("transformer.norm.weight", vec![hidden_size]);
 
         // Add constraints for attention and MLP layers
         let num_layers = config.num_hidden_layers;
@@ -322,43 +327,43 @@ impl ShapeVerifier {
             // Attention projections
             self.add_exact_shape(
                 &format!("{}.attention.q_proj.weight", layer_prefix),
-                vec![config.hidden_size as usize, config.hidden_size as usize],
+                vec![hidden_size, hidden_size],
             );
             self.add_exact_shape(
                 &format!("{}.attention.k_proj.weight", layer_prefix),
-                vec![config.hidden_size as usize, config.hidden_size as usize],
+                vec![kv_hidden_size, hidden_size],
             );
             self.add_exact_shape(
                 &format!("{}.attention.v_proj.weight", layer_prefix),
-                vec![config.hidden_size as usize, config.hidden_size as usize],
+                vec![kv_hidden_size, hidden_size],
             );
             self.add_exact_shape(
                 &format!("{}.attention.o_proj.weight", layer_prefix),
-                vec![config.hidden_size as usize, config.hidden_size as usize],
+                vec![hidden_size, hidden_size],
             );
 
             // MLP projections
             self.add_exact_shape(
                 &format!("{}.mlp.gate_proj.weight", layer_prefix),
-                vec![config.intermediate_size as usize, config.hidden_size as usize],
+                vec![config.intermediate_size as usize, hidden_size],
             );
             self.add_exact_shape(
                 &format!("{}.mlp.up_proj.weight", layer_prefix),
-                vec![config.intermediate_size as usize, config.hidden_size as usize],
+                vec![config.intermediate_size as usize, hidden_size],
             );
             self.add_exact_shape(
                 &format!("{}.mlp.down_proj.weight", layer_prefix),
-                vec![config.hidden_size as usize, config.intermediate_size as usize],
+                vec![hidden_size, config.intermediate_size as usize],
             );
 
             // Layer norms
             self.add_exact_shape(
                 &format!("{}.input_layernorm.weight", layer_prefix),
-                vec![config.hidden_size as usize],
+                vec![hidden_size],
             );
             self.add_exact_shape(
                 &format!("{}.post_attention_layernorm.weight", layer_prefix),
-                vec![config.hidden_size as usize],
+                vec![hidden_size],
             );
         }
     }
@@ -507,7 +512,10 @@ impl VerificationReport {
         info!("  Errors: {}", self.error_count);
         info!("  Warnings: {}", self.warning_count);
         info!("  Strict mode: {}", self.strict_mode);
-        info!("  Overall status: {}", if self.passed() { "PASS" } else { "FAIL" });
+        info!(
+            "  Overall status: {}",
+            if self.passed() { "PASS" } else { "FAIL" }
+        );
 
         if self.error_count > 0 {
             error!("Errors found:");
@@ -532,7 +540,7 @@ impl VerificationReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use candle_core::{Device, DType, Tensor};
+    use candle_core::{DType, Device, Tensor};
 
     fn create_test_tensor(shape: &[usize]) -> Tensor {
         Tensor::zeros(shape, DType::F32, &Device::Cpu).unwrap()
@@ -563,8 +571,7 @@ mod tests {
     #[test]
     fn test_shape_constraints() {
         let mut verifier = ShapeVerifier::new(false);
-        let constraints = ShapeConstraints::rank_only(2)
-            .add_divisibility_constraint(0, 8); // First dimension must be divisible by 8
+        let constraints = ShapeConstraints::rank_only(2).add_divisibility_constraint(0, 8); // First dimension must be divisible by 8
 
         verifier.add_constrained_shape("test_tensor", constraints);
 
@@ -601,17 +608,43 @@ mod tests {
         let verifier = ShapeVerifier::for_calm_model(&config, false);
 
         assert!(verifier.expected_shapes.len() > 0);
-        assert!(verifier.expected_shapes.contains_key("transformer.embed_tokens.weight"));
+        assert!(verifier
+            .expected_shapes
+            .contains_key("transformer.embed_tokens.weight"));
         assert!(verifier.expected_shapes.contains_key("lm_head.weight"));
+    }
+
+    #[test]
+    fn test_calm_config_gqa_kv_shapes() {
+        let mut config = CALMConfig::default();
+        config.hidden_size = 1024;
+        config.num_attention_heads = 16;
+        config.num_key_value_heads = Some(4);
+
+        let verifier = ShapeVerifier::for_calm_model(&config, false);
+        let expected_kv_shape = vec![256, 1024];
+
+        match verifier
+            .expected_shapes
+            .get("transformer.layers.0.attention.k_proj.weight")
+        {
+            Some(ExpectedShape::Exact(dims)) => assert_eq!(dims, &expected_kv_shape),
+            other => panic!("unexpected k_proj expected shape: {:?}", other),
+        }
+
+        match verifier
+            .expected_shapes
+            .get("transformer.layers.0.attention.v_proj.weight")
+        {
+            Some(ExpectedShape::Exact(dims)) => assert_eq!(dims, &expected_kv_shape),
+            other => panic!("unexpected v_proj expected shape: {:?}", other),
+        }
     }
 
     #[test]
     fn test_model_verification() {
         let mut tensors = HashMap::new();
-        tensors.insert(
-            "test_weight".to_string(),
-            create_test_tensor(&[100, 200]),
-        );
+        tensors.insert("test_weight".to_string(), create_test_tensor(&[100, 200]));
 
         let verifier = ShapeVerifier::new(false);
         let report = verifier.verify_model_shapes(&tensors).unwrap();

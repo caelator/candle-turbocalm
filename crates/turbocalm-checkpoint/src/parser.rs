@@ -23,12 +23,22 @@ impl StateDictParser {
         let mut all_tensors = HashMap::new();
 
         for (i, path) in file_paths.iter().enumerate() {
-            debug!("Processing file {}/{}: {}", i + 1, file_paths.len(), path.display());
+            debug!(
+                "Processing file {}/{}: {}",
+                i + 1,
+                file_paths.len(),
+                path.display()
+            );
 
-            let file_tensors = self.parse_single_file(path)
+            let file_tensors = self
+                .parse_single_file(path)
                 .with_context(|| format!("Failed to parse file: {}", path.display()))?;
 
-            info!("Loaded {} tensors from {}", file_tensors.len(), path.display());
+            info!(
+                "Loaded {} tensors from {}",
+                file_tensors.len(),
+                path.display()
+            );
 
             // Check for tensor name conflicts
             for (name, tensor) in file_tensors {
@@ -46,10 +56,7 @@ impl StateDictParser {
     /// Parse a single checkpoint file (auto-detect format)
     pub fn parse_single_file<P: AsRef<Path>>(&self, path: P) -> Result<HashMap<String, Tensor>> {
         let path = path.as_ref();
-        let extension = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("");
+        let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or("");
 
         match extension {
             "safetensors" => self.parse_safetensors(path),
@@ -87,7 +94,10 @@ impl StateDictParser {
             tensors.insert(tensor_name.to_string(), tensor);
         }
 
-        debug!("Successfully parsed {} tensors from safetensors", tensors.len());
+        debug!(
+            "Successfully parsed {} tensors from safetensors",
+            tensors.len()
+        );
         Ok(tensors)
     }
 
@@ -131,7 +141,8 @@ impl StateDictParser {
         tensor_name: &str,
     ) -> Result<Tensor> {
         // Convert safetensors dtype to candle dtype
-        let candle_dtype = self.convert_dtype(tensor_view.dtype())
+        let candle_dtype = self
+            .convert_dtype(tensor_view.dtype())
             .with_context(|| format!("Unsupported dtype for tensor: {}", tensor_name))?;
 
         // Convert shape
@@ -162,9 +173,7 @@ impl StateDictParser {
                 let uint_data = self.bytes_to_u32_slice(data)?;
                 Tensor::from_slice(&uint_data, shape, &self.device)?
             }
-            DType::U8 => {
-                Tensor::from_slice(data, shape, &self.device)?
-            }
+            DType::U8 => Tensor::from_slice(data, shape, &self.device)?,
             DType::F64 => {
                 let double_data = self.bytes_to_f64_slice(data)?;
                 Tensor::from_slice(&double_data, shape, &self.device)?
@@ -185,7 +194,10 @@ impl StateDictParser {
             safetensors::Dtype::U32 => Ok(DType::U32),
             safetensors::Dtype::U8 => Ok(DType::U8),
             safetensors::Dtype::F64 => Ok(DType::F64),
-            _ => Err(anyhow::anyhow!("Unsupported dtype: {:?}", safetensors_dtype)),
+            _ => Err(anyhow::anyhow!(
+                "Unsupported dtype: {:?}",
+                safetensors_dtype
+            )),
         }
     }
 
@@ -239,7 +251,9 @@ impl StateDictParser {
 
         let mut result = Vec::with_capacity(bytes.len() / 8);
         for chunk in bytes.chunks_exact(8) {
-            let array = [chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7]];
+            let array = [
+                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+            ];
             result.push(i64::from_le_bytes(array));
         }
         Ok(result)
@@ -267,7 +281,9 @@ impl StateDictParser {
 
         let mut result = Vec::with_capacity(bytes.len() / 8);
         for chunk in bytes.chunks_exact(8) {
-            let array = [chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7]];
+            let array = [
+                chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7],
+            ];
             result.push(f64::from_le_bytes(array));
         }
         Ok(result)
@@ -321,7 +337,10 @@ impl TensorSummary {
     pub fn display_summary(&self) {
         info!("Tensor Summary:");
         info!("  Total tensors: {}", self.tensor_count);
-        info!("  Total parameters: {:.2}M", self.total_parameters as f64 / 1_000_000.0);
+        info!(
+            "  Total parameters: {:.2}M",
+            self.total_parameters as f64 / 1_000_000.0
+        );
         info!("  Total size: {:.1} MB", self.total_size_mb);
         info!("  Data type distribution:");
         for (dtype, count) in &self.dtype_distribution {
@@ -349,7 +368,9 @@ pub mod convenience {
     }
 
     /// Parse and summarize a model
-    pub fn parse_and_summarize(file_paths: &[PathBuf]) -> Result<(HashMap<String, Tensor>, TensorSummary)> {
+    pub fn parse_and_summarize(
+        file_paths: &[PathBuf],
+    ) -> Result<(HashMap<String, Tensor>, TensorSummary)> {
         let parser = StateDictParser::new(Device::Cpu);
         let tensors = parser.parse_model_files(file_paths)?;
         let summary = parser.get_tensor_summary(&tensors);
@@ -372,12 +393,30 @@ mod tests {
     fn test_dtype_conversion() {
         let parser = StateDictParser::new(Device::Cpu);
 
-        assert_eq!(parser.convert_dtype(safetensors::Dtype::F32).unwrap(), DType::F32);
-        assert_eq!(parser.convert_dtype(safetensors::Dtype::F16).unwrap(), DType::F16);
-        assert_eq!(parser.convert_dtype(safetensors::Dtype::BF16).unwrap(), DType::BF16);
-        assert_eq!(parser.convert_dtype(safetensors::Dtype::I64).unwrap(), DType::I64);
-        assert_eq!(parser.convert_dtype(safetensors::Dtype::U32).unwrap(), DType::U32);
-        assert_eq!(parser.convert_dtype(safetensors::Dtype::U8).unwrap(), DType::U8);
+        assert_eq!(
+            parser.convert_dtype(safetensors::Dtype::F32).unwrap(),
+            DType::F32
+        );
+        assert_eq!(
+            parser.convert_dtype(safetensors::Dtype::F16).unwrap(),
+            DType::F16
+        );
+        assert_eq!(
+            parser.convert_dtype(safetensors::Dtype::BF16).unwrap(),
+            DType::BF16
+        );
+        assert_eq!(
+            parser.convert_dtype(safetensors::Dtype::I64).unwrap(),
+            DType::I64
+        );
+        assert_eq!(
+            parser.convert_dtype(safetensors::Dtype::U32).unwrap(),
+            DType::U32
+        );
+        assert_eq!(
+            parser.convert_dtype(safetensors::Dtype::U8).unwrap(),
+            DType::U8
+        );
     }
 
     #[test]

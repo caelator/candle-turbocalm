@@ -9,7 +9,7 @@ name = "turbocalm"
 path = "src/main.rs"
 
 [dependencies]
-turbocalm-core = { path = "../turbocalm-core" }
+turbocalm-core = { path = "../turbocalm-core", features = ["metal"] }
 turbocalm-checkpoint = { path = "../turbocalm-checkpoint" }
 turbocalm-models = { path = "../turbocalm-models" }
 turbocalm-kv = { path = "../turbocalm-kv" }
