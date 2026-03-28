@@ -1,0 +1,20 @@
+[package]
+name = "turbocalm-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "turbocalm"
+path = "src/main.rs"
+
+[dependencies]
+turbocalm-core = { path = "../turbocalm-core" }
+turbocalm-checkpoint = { path = "../turbocalm-checkpoint" }
+turbocalm-models = { path = "../turbocalm-models" }
+turbocalm-kv = { path = "../turbocalm-kv" }
+turbocalm-calibrate = { path = "../turbocalm-calibrate" }
+anyhow.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
