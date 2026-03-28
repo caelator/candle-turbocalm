@@ -373,6 +373,7 @@ impl KnownCALMModels {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use turbocalm_core::DownloadManifest;
 
     #[test]
     fn test_checkpoint_downloader_creation() {

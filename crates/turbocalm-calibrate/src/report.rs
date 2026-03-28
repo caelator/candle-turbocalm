@@ -711,7 +711,7 @@ impl ReportCustomizer {
 mod tests {
     use super::*;
     use crate::profiles::{CalibrationMetadata, DatasetInfo, SearchStats};
-    use crate::ContinuousParams;
+    use crate::{ContinuousParams, FitnessMetrics, QuantProfile};
 
     fn create_test_collection() -> ProfileCollection {
         let profile_entry = ProfileEntry {
