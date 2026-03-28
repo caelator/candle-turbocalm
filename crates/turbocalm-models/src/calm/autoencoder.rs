@@ -239,7 +239,11 @@ pub struct CalmAutoencoderEncoder {
 }
 
 impl CalmAutoencoderEncoder {
-    fn load(vb: VarBuilder, config: &CalmAutoencoderConfig, embedding_weight: Tensor) -> Result<Self> {
+    fn load(
+        vb: VarBuilder,
+        config: &CalmAutoencoderConfig,
+        embedding_weight: Tensor,
+    ) -> Result<Self> {
         let embed_tokens = Embedding::new(embedding_weight, config.hidden_size);
 
         let encoder_layers = (0..config.num_encoder_layers)
@@ -435,12 +439,17 @@ impl CalmAutoencoder {
         Self::load_prefixed(vb, "", config)
     }
 
-    pub fn load_prefixed(vb: VarBuilder, prefix: &str, config: CalmAutoencoderConfig) -> Result<Self> {
+    pub fn load_prefixed(
+        vb: VarBuilder,
+        prefix: &str,
+        config: CalmAutoencoderConfig,
+    ) -> Result<Self> {
         config.validate()?;
 
         let vb = if prefix.is_empty() { vb } else { vb.pp(prefix) };
         let embedding_weight = Self::load_embedding_weight(&vb, &config)?;
-        let encoder = CalmAutoencoderEncoder::load(vb.pp("encoder"), &config, embedding_weight.clone())?;
+        let encoder =
+            CalmAutoencoderEncoder::load(vb.pp("encoder"), &config, embedding_weight.clone())?;
         let lm_head = Linear::new(embedding_weight, None);
         let decoder = CalmAutoencoderDecoder::load(vb.pp("decoder"), &config, lm_head)?;
 

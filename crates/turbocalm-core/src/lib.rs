@@ -8,6 +8,7 @@ pub mod device;
 pub mod error;
 pub mod hub;
 pub mod metrics;
+pub mod quant;
 pub mod tokenizer;
 
 pub use config::{AutoencoderConfig, CALMConfig, RopeScaling};
@@ -20,4 +21,5 @@ pub use metrics::{
     MemoryReporter, MemorySource, MemoryUsage, MetricsBundle, MetricsTracker, SimilarityMetrics,
     TensorMemoryInfo,
 };
+pub use quant::{ContinuousParams, QuantProfile};
 pub use tokenizer::{SpecialTokens, TokenizerLoader, TokenizerType, TokenizerUtils};

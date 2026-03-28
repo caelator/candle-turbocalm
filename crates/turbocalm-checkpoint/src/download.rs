@@ -2,8 +2,8 @@ use anyhow::Result;
 use hf_hub::api::sync::Api;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use tracing::{info, warn, debug};
-use turbocalm_core::{HubClient, CompleteModelDownload, DownloadManifest};
+use tracing::{debug, info, warn};
+use turbocalm_core::{CompleteModelDownload, DownloadManifest, HubClient};
 
 /// Specialized checkpoint downloader for CALM models
 pub struct CheckpointDownloader {
@@ -40,7 +40,9 @@ impl CheckpointDownloader {
     /// Download model weights only (for existing configs)
     pub fn download_weights_only(&self, model_id: &str) -> Result<Vec<PathBuf>> {
         info!("Downloading model weights for: {}", model_id);
-        self.hub_client.download_safetensors(model_id).map_err(|e| anyhow::anyhow!("{}", e))
+        self.hub_client
+            .download_safetensors(model_id)
+            .map_err(|e| anyhow::anyhow!("{}", e))
     }
 
     /// Download specific checkpoint files by pattern
@@ -49,7 +51,10 @@ impl CheckpointDownloader {
         model_id: &str,
         patterns: &[&str],
     ) -> Result<HashMap<String, PathBuf>> {
-        info!("Downloading checkpoint files for {}: {:?}", model_id, patterns);
+        info!(
+            "Downloading checkpoint files for {}: {:?}",
+            model_id, patterns
+        );
 
         let repo = self.hub_client.api().model(model_id.to_string());
         let mut downloaded_files = HashMap::new();
@@ -90,7 +95,10 @@ impl CheckpointDownloader {
         }
 
         if downloaded_files.is_empty() {
-            return Err(anyhow::anyhow!("No files downloaded for patterns: {:?}", patterns));
+            return Err(anyhow::anyhow!(
+                "No files downloaded for patterns: {:?}",
+                patterns
+            ));
         }
 
         Ok(downloaded_files)
@@ -137,7 +145,10 @@ impl CheckpointDownloader {
     ) -> Result<Option<turbocalm_core::AutoencoderConfig>> {
         // Look for autoencoder-specific config file
         if let Some(ae_config_path) = download.config_files.get("autoencoder_config.json") {
-            debug!("Parsing autoencoder config from: {}", ae_config_path.display());
+            debug!(
+                "Parsing autoencoder config from: {}",
+                ae_config_path.display()
+            );
 
             let config_content = std::fs::read_to_string(ae_config_path)?;
             match serde_json::from_str::<turbocalm_core::AutoencoderConfig>(&config_content) {
@@ -182,23 +193,38 @@ impl CheckpointDownloader {
             calm_config.hidden_size = hidden_size as u32;
         }
 
-        if let Some(intermediate_size) = generic_config.get("intermediate_size").and_then(|v| v.as_u64()) {
+        if let Some(intermediate_size) = generic_config
+            .get("intermediate_size")
+            .and_then(|v| v.as_u64())
+        {
             calm_config.intermediate_size = intermediate_size as u32;
         }
 
-        if let Some(num_layers) = generic_config.get("num_hidden_layers").and_then(|v| v.as_u64()) {
+        if let Some(num_layers) = generic_config
+            .get("num_hidden_layers")
+            .and_then(|v| v.as_u64())
+        {
             calm_config.num_hidden_layers = num_layers as u32;
         }
 
-        if let Some(num_heads) = generic_config.get("num_attention_heads").and_then(|v| v.as_u64()) {
+        if let Some(num_heads) = generic_config
+            .get("num_attention_heads")
+            .and_then(|v| v.as_u64())
+        {
             calm_config.num_attention_heads = num_heads as u32;
         }
 
-        if let Some(num_kv_heads) = generic_config.get("num_key_value_heads").and_then(|v| v.as_u64()) {
+        if let Some(num_kv_heads) = generic_config
+            .get("num_key_value_heads")
+            .and_then(|v| v.as_u64())
+        {
             calm_config.num_key_value_heads = Some(num_kv_heads as u32);
         }
 
-        if let Some(max_pos) = generic_config.get("max_position_embeddings").and_then(|v| v.as_u64()) {
+        if let Some(max_pos) = generic_config
+            .get("max_position_embeddings")
+            .and_then(|v| v.as_u64())
+        {
             calm_config.max_position_embeddings = max_pos as u32;
         }
 
@@ -241,7 +267,9 @@ impl CheckpointDownloader {
     ) -> Option<turbocalm_core::AutoencoderConfig> {
         // Look for autoencoder section in config
         if let Some(ae_section) = config_json.get("autoencoder") {
-            if let Ok(ae_config) = serde_json::from_value::<turbocalm_core::AutoencoderConfig>(ae_section.clone()) {
+            if let Ok(ae_config) =
+                serde_json::from_value::<turbocalm_core::AutoencoderConfig>(ae_section.clone())
+            {
                 return Some(ae_config);
             }
         }
@@ -306,16 +334,17 @@ impl CALMCheckpoint {
         let mut manifest = self.complete_download.manifest.clone();
 
         // Add CALM-specific metadata
-        manifest.files.insert(
-            "model_type".to_string(),
-            self.calm_config().model_type,
-        );
+        manifest
+            .files
+            .insert("model_type".to_string(), self.calm_config().model_type);
         manifest.files.insert(
             "patch_size".to_string(),
             self.calm_config().patch_size.to_string(),
         );
 
-        manifest.save_to_file(path).map_err(|e| anyhow::anyhow!("{}", e))
+        manifest
+            .save_to_file(path)
+            .map_err(|e| anyhow::anyhow!("{}", e))
     }
 }
 
@@ -351,7 +380,10 @@ mod tests {
         // This test might fail without network access
         match CheckpointDownloader::new() {
             Ok(_) => println!("CheckpointDownloader created successfully"),
-            Err(e) => println!("CheckpointDownloader creation failed (expected in some environments): {}", e),
+            Err(e) => println!(
+                "CheckpointDownloader creation failed (expected in some environments): {}",
+                e
+            ),
         }
     }
 
@@ -372,7 +404,11 @@ mod tests {
         let complete_download = CompleteModelDownload {
             model_id: "test/model".to_string(),
             model_files: vec![PathBuf::from("/tmp/model.safetensors")],
-            config_files: { let mut m = HashMap::new(); m.insert("config.json".to_string(), PathBuf::from("/tmp/config.json")); m },
+            config_files: {
+                let mut m = HashMap::new();
+                m.insert("config.json".to_string(), PathBuf::from("/tmp/config.json"));
+                m
+            },
             tokenizer_files: HashMap::new(),
             manifest: DownloadManifest::new("test/model"),
         };

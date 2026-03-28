@@ -88,45 +88,45 @@ impl CALMModelManifest {
     pub fn add_safetensors_file(&mut self, filename: &str, path: &Path, checksum: Option<String>) {
         let file_info = FileInfo {
             path: path.to_path_buf(),
-            size_bytes: std::fs::metadata(path)
-                .map(|m| m.len())
-                .unwrap_or(0),
+            size_bytes: std::fs::metadata(path).map(|m| m.len()).unwrap_or(0),
             checksum,
             created_at: chrono::Utc::now().to_rfc3339(),
             file_type: FileType::SafeTensors,
         };
 
-        self.files.model_files.insert(filename.to_string(), file_info);
+        self.files
+            .model_files
+            .insert(filename.to_string(), file_info);
     }
 
     /// Add a config file to the manifest
     pub fn add_config_file(&mut self, filename: &str, path: &Path) {
         let file_info = FileInfo {
             path: path.to_path_buf(),
-            size_bytes: std::fs::metadata(path)
-                .map(|m| m.len())
-                .unwrap_or(0),
+            size_bytes: std::fs::metadata(path).map(|m| m.len()).unwrap_or(0),
             checksum: None,
             created_at: chrono::Utc::now().to_rfc3339(),
             file_type: FileType::Config,
         };
 
-        self.files.config_files.insert(filename.to_string(), file_info);
+        self.files
+            .config_files
+            .insert(filename.to_string(), file_info);
     }
 
     /// Add tokenizer files to the manifest
     pub fn add_tokenizer_file(&mut self, filename: &str, path: &Path) {
         let file_info = FileInfo {
             path: path.to_path_buf(),
-            size_bytes: std::fs::metadata(path)
-                .map(|m| m.len())
-                .unwrap_or(0),
+            size_bytes: std::fs::metadata(path).map(|m| m.len()).unwrap_or(0),
             checksum: None,
             created_at: chrono::Utc::now().to_rfc3339(),
             file_type: FileType::Tokenizer,
         };
 
-        self.files.tokenizer_files.insert(filename.to_string(), file_info);
+        self.files
+            .tokenizer_files
+            .insert(filename.to_string(), file_info);
     }
 
     /// Set conversion information
@@ -141,7 +141,9 @@ impl CALMModelManifest {
 
     /// Get total model size in bytes
     pub fn total_size_bytes(&self) -> u64 {
-        self.files.model_files.values()
+        self.files
+            .model_files
+            .values()
             .map(|f| f.size_bytes)
             .sum::<u64>()
     }
@@ -177,7 +179,11 @@ impl CALMModelManifest {
         // Check tokenizer files
         for (name, info) in &self.files.tokenizer_files {
             if !info.path.exists() {
-                missing_files.push(format!("Tokenizer file '{}': {}", name, info.path.display()));
+                missing_files.push(format!(
+                    "Tokenizer file '{}': {}",
+                    name,
+                    info.path.display()
+                ));
             }
         }
 
@@ -202,8 +208,13 @@ impl CALMModelManifest {
         info!("    Tokenizer files: {}", self.files.tokenizer_files.len());
 
         if let Some(ref verification) = self.verification {
-            info!("  Verification: {} (errors: {}, warnings: {})",
-                if verification.passed { "PASSED" } else { "FAILED" },
+            info!(
+                "  Verification: {} (errors: {}, warnings: {})",
+                if verification.passed {
+                    "PASSED"
+                } else {
+                    "FAILED"
+                },
                 verification.error_count,
                 verification.warning_count
             );
@@ -321,8 +332,10 @@ impl ManifestManager {
 
     /// Save a manifest for a model
     pub fn save_manifest(&self, manifest: &CALMModelManifest) -> Result<PathBuf> {
-        let filename = format!("{}.manifest.json",
-            sanitize_filename(&manifest.metadata.model_name));
+        let filename = format!(
+            "{}.manifest.json",
+            sanitize_filename(&manifest.metadata.model_name)
+        );
         let path = self.manifest_dir.join(filename);
 
         manifest.save_to_file(&path)?;
@@ -346,7 +359,8 @@ impl ManifestManager {
             let path = entry.path();
 
             if path.extension().and_then(|s| s.to_str()) == Some("json")
-                && path.file_stem()
+                && path
+                    .file_stem()
                     .and_then(|s| s.to_str())
                     .map(|s| s.ends_with(".manifest"))
                     .unwrap_or(false)
@@ -429,10 +443,9 @@ pub struct ModelSummary {
 impl ModelSummary {
     /// Display summary information
     pub fn display(&self) {
-        info!("  {}: {:.1} MB ({})",
-            self.model_name,
-            self.size_mb,
-            self.created_at
+        info!(
+            "  {}: {:.1} MB ({})",
+            self.model_name, self.size_mb, self.created_at
         );
     }
 }
@@ -455,11 +468,7 @@ mod tests {
     #[test]
     fn test_manifest_creation() {
         let calm_config = CALMConfig::default();
-        let mut manifest = CALMModelManifest::new(
-            "test/model",
-            calm_config,
-            None,
-        );
+        let mut manifest = CALMModelManifest::new("test/model", calm_config, None);
 
         assert_eq!(manifest.metadata.model_id, "test/model");
         assert_eq!(manifest.metadata.model_name, "model");
@@ -474,11 +483,7 @@ mod tests {
     #[test]
     fn test_manifest_serialization() {
         let calm_config = CALMConfig::default();
-        let manifest = CALMModelManifest::new(
-            "test/model",
-            calm_config,
-            None,
-        );
+        let manifest = CALMModelManifest::new("test/model", calm_config, None);
 
         // Test JSON serialization
         let json = serde_json::to_string(&manifest).unwrap();
@@ -494,11 +499,7 @@ mod tests {
         let manager = ManifestManager::new(temp_dir.path())?;
 
         let calm_config = CALMConfig::default();
-        let manifest = CALMModelManifest::new(
-            "test/model",
-            calm_config,
-            None,
-        );
+        let manifest = CALMModelManifest::new("test/model", calm_config, None);
 
         // Save manifest
         let saved_path = manager.save_manifest(&manifest)?;
@@ -506,7 +507,10 @@ mod tests {
 
         // Load manifest
         let loaded_manifest = manager.load_manifest("model")?;
-        assert_eq!(loaded_manifest.metadata.model_id, manifest.metadata.model_id);
+        assert_eq!(
+            loaded_manifest.metadata.model_id,
+            manifest.metadata.model_id
+        );
 
         // List manifests
         let summaries = manager.list_manifests()?;

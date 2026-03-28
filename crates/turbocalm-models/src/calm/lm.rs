@@ -3,12 +3,12 @@
 //! This provides a simplified interface that wraps the main CalmGenerationModel
 //! for compatibility with existing code that expects the CalmLanguageModel interface.
 
-use candle_core::{DType, Device, Tensor};
+use anyhow::Result;
+use candle_core::Tensor;
 use candle_nn::VarBuilder;
 use serde::{Deserialize, Serialize};
-use anyhow::Result;
 
-use super::generation::{CalmDecoder, PatchEmbeddingProjection};
+use super::generation::{CalmDecoder, CalmKvCacheBackend, PatchEmbeddingProjection};
 use turbocalm_core::CALMConfig;
 
 /// Configuration for the CALM language model (legacy interface)
@@ -99,7 +99,11 @@ pub struct CalmLanguageModel {
 impl CalmLanguageModel {
     pub fn new(config: &CalmLmConfig, vb: VarBuilder) -> Result<Self> {
         let calm_config = config.to_calm_config();
-        let transformer = CalmDecoder::load(vb.pp("transformer"), &calm_config)?;
+        let transformer = CalmDecoder::load(
+            vb.pp("transformer"),
+            &calm_config,
+            &CalmKvCacheBackend::Dense,
+        )?;
         let embed_proj = PatchEmbeddingProjection::load(vb.pp("embed_proj"), &calm_config)?;
 
         Ok(Self {
@@ -111,18 +115,27 @@ impl CalmLanguageModel {
 
     /// Forward pass: latent vectors → hidden states
     /// This method maintains compatibility with the original interface but now delegates to the unified implementation
-    pub fn forward(&mut self, latent_input: &Tensor, _mask: Option<&Tensor>, offset: usize) -> Result<Tensor> {
+    pub fn forward(
+        &mut self,
+        latent_input: &Tensor,
+        _mask: Option<&Tensor>,
+        offset: usize,
+    ) -> Result<Tensor> {
         // Convert latent patches to patch embeddings
         let (batch_size, num_patches, latent_size) = latent_input.dims3()?;
         let hidden_size = self.config.hidden_size;
 
         if latent_size != self.config.latent_size {
-            return Err(anyhow::anyhow!("Expected latent_size={}, got {}", self.config.latent_size, latent_size));
+            return Err(anyhow::anyhow!(
+                "Expected latent_size={}, got {}",
+                self.config.latent_size,
+                latent_size
+            ));
         }
 
         // Convert latent patches to patch embeddings by padding to hidden_size
-        let patch_embeddings = latent_input
-            .pad_with_zeros(candle_core::D::Minus1, 0, hidden_size - latent_size)?;
+        let patch_embeddings =
+            latent_input.pad_with_zeros(candle_core::D::Minus1, 0, hidden_size - latent_size)?;
 
         // Normalize the patch embeddings
         let norm_factor = (hidden_size as f32).sqrt();
@@ -139,7 +152,7 @@ impl CalmLanguageModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use candle_core::Device;
+    use candle_core::{DType, Device};
     use candle_nn::VarMap;
 
     #[test]
@@ -178,7 +191,14 @@ mod tests {
     fn test_lm_forward_shape() {
         let device = Device::Cpu;
         let config = CalmLmConfig {
+            hidden_size: 32,
+            intermediate_size: 64,
             num_hidden_layers: 2,
+            num_attention_heads: 4,
+            num_key_value_heads: 4,
+            latent_size: 8,
+            patch_size: 2,
+            max_position_embeddings: 64,
             ..CalmLmConfig::default()
         };
         let varmap = VarMap::new();

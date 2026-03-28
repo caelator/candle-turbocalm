@@ -406,12 +406,17 @@ impl MetricsTracker {
 
     /// Record a metric value
     pub fn record(&mut self, name: &str, value: f32) {
-        self.metrics.entry(name.to_string()).or_insert_with(Vec::new).push(value);
+        self.metrics
+            .entry(name.to_string())
+            .or_insert_with(Vec::new)
+            .push(value);
     }
 
     /// Get the latest value for a metric
     pub fn latest(&self, name: &str) -> Option<f32> {
-        self.metrics.get(name).and_then(|values| values.last().copied())
+        self.metrics
+            .get(name)
+            .and_then(|values| values.last().copied())
     }
 
     /// Get the average value for a metric
@@ -445,7 +450,13 @@ impl MetricsTracker {
         info!("Metrics Summary:");
         for (name, values) in &self.metrics {
             if let (Some(latest), Some(avg)) = (values.last(), self.average(name)) {
-                info!("  {}: latest={:.4}, avg={:.4}, count={}", name, latest, avg, values.len());
+                info!(
+                    "  {}: latest={:.4}, avg={:.4}, count={}",
+                    name,
+                    latest,
+                    avg,
+                    values.len()
+                );
             }
         }
     }

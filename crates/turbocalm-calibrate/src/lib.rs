@@ -5,6 +5,7 @@
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+pub use turbocalm_core::{ContinuousParams, QuantProfile};
 
 pub mod cmaes;
 pub mod dataset;
@@ -13,40 +14,6 @@ pub mod pareto;
 pub mod profiles;
 pub mod report;
 pub mod search;
-
-/// Quantization profile with discrete and continuous parameters
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QuantProfile {
-    /// Quantization bit width
-    pub bit_width: u8,
-    /// Quasi-Jordan-Lie dimension
-    pub qjl_dim: usize,
-    /// Random rotation seed
-    pub rotation_seed: u64,
-    /// Continuous parameters optimized by CMA-ES
-    pub continuous: ContinuousParams,
-}
-
-/// Continuous parameters optimized by CMA-ES
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContinuousParams {
-    /// Clipping percentile (0.0 to 1.0)
-    pub clipping_percentile: f64,
-    /// Scale multiplier (0.1 to 10.0)
-    pub scale_multiplier: f64,
-    /// QJL threshold (1e-6 to 1e-2)
-    pub qjl_threshold: f64,
-}
-
-impl Default for ContinuousParams {
-    fn default() -> Self {
-        Self {
-            clipping_percentile: 0.95,
-            scale_multiplier: 1.0,
-            qjl_threshold: 1e-4,
-        }
-    }
-}
 
 /// Discrete parameter configuration space
 #[derive(Debug, Clone)]

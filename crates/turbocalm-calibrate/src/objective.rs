@@ -2,8 +2,8 @@
 //!
 //! Implements the fitness function: memory_gain - λ1·ΔBrierLM - λ2·cosine_penalty - λ3·latency_penalty
 
-use crate::{FitnessMetrics, ObjectiveWeights, QuantProfile};
 use crate::dataset::{ProcessedDataset, TensorStats};
+use crate::{FitnessMetrics, ObjectiveWeights, QuantProfile};
 use anyhow::Result;
 use candle_core::{Device, Tensor};
 use std::time::Instant;
@@ -65,7 +65,8 @@ impl ObjectiveFunction {
         dataset: &ProcessedDataset,
         device: &Device,
     ) -> Result<(FitnessMetrics, f64)> {
-        let reference = self.reference_metrics
+        let reference = self
+            .reference_metrics
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Reference metrics not set"))?;
 
@@ -108,8 +109,9 @@ impl ObjectiveFunction {
         // though exact accounting should eventually use real layer metadata.
         let bits_reduction_factor = 32.0 / profile.bit_width as f64;
         let memory_reduction = 0.7; // Assuming 70% of memory is quantizable
-        let quantized_memory = (reference.memory_usage as f64 *
-                               (1.0 - memory_reduction + memory_reduction / bits_reduction_factor)) as usize;
+        let quantized_memory = (reference.memory_usage as f64
+            * (1.0 - memory_reduction + memory_reduction / bits_reduction_factor))
+            as usize;
 
         // TODO(Phase 5): replace synthetic quality, latency, and activation-similarity
         // estimates with real baseline-vs-quantized model inference over `dataset`.
@@ -119,7 +121,7 @@ impl ObjectiveFunction {
         // Simulate latency impact (lower precision can be faster, but QJL adds overhead)
         let qjl_overhead = (profile.qjl_dim as f64).ln() * 0.01; // Log scaling for QJL overhead
         let precision_speedup = match profile.bit_width {
-            2 => 0.3, // 30% faster for 2-bit
+            2 => 0.3,  // 30% faster for 2-bit
             3 => 0.15, // 15% faster for 3-bit
             4 => 0.05, // 5% faster for 4-bit
             _ => 0.0,
@@ -131,10 +133,12 @@ impl ObjectiveFunction {
         let cosine_similarity = self.estimate_cosine_similarity(profile, dataset)?;
 
         // Create fitness metrics
-        let memory_gain = (reference.memory_usage - quantized_memory) as f64 / reference.memory_usage as f64;
+        let memory_gain =
+            (reference.memory_usage - quantized_memory) as f64 / reference.memory_usage as f64;
         let delta_brier_lm = quantized_brier_lm - reference.baseline_brier_lm;
         let cosine_penalty = 1.0 - cosine_similarity;
-        let latency_penalty = (quantized_latency_ms - reference.baseline_latency_ms) / reference.baseline_latency_ms;
+        let latency_penalty =
+            (quantized_latency_ms - reference.baseline_latency_ms) / reference.baseline_latency_ms;
 
         let fitness = FitnessMetrics {
             memory_gain,
@@ -168,15 +172,19 @@ impl ObjectiveFunction {
         let qjl_factor = 1.0 - (profile.qjl_dim as f64 / 64.0).min(1.0) * 0.3;
 
         // Continuous parameter impacts
-        let clipping_impact = (1.0 - profile.continuous.clipping_percentile) * 0.5;
-        let scale_impact = (profile.continuous.scale_multiplier - 1.0).abs() * 0.1;
-        let threshold_impact = (profile.continuous.qjl_threshold - 1e-4).abs() * 1000.0;
+        let clipping_impact = (1.0 - profile.clipping_percentile) * 0.5;
+        let scale_impact = (profile.scale_multiplier - 1.0).abs() * 0.1;
+        let threshold_impact = (profile.qjl_threshold as f64 - 1e-4).abs() * 1000.0;
 
         bit_degradation * qjl_factor + clipping_impact + scale_impact + threshold_impact
     }
 
     /// Estimate cosine similarity between original and quantized activations
-    fn estimate_cosine_similarity(&self, profile: &QuantProfile, _dataset: &ProcessedDataset) -> Result<f64> {
+    fn estimate_cosine_similarity(
+        &self,
+        profile: &QuantProfile,
+        _dataset: &ProcessedDataset,
+    ) -> Result<f64> {
         // TODO(Phase 5): compare real activation tensors from the baseline and
         // quantized model instead of using this hand-tuned similarity proxy.
         // Simulate activation comparison based on quantization parameters
@@ -189,7 +197,7 @@ impl ObjectiveFunction {
 
         // QJL and continuous parameter adjustments
         let qjl_boost = (profile.qjl_dim as f64 / 64.0).min(1.0) * 0.05;
-        let clipping_penalty = (1.0 - profile.continuous.clipping_percentile) * 0.1;
+        let clipping_penalty = (1.0 - profile.clipping_percentile) * 0.1;
 
         let similarity = (base_similarity + qjl_boost - clipping_penalty)
             .max(0.0)
@@ -199,12 +207,20 @@ impl ObjectiveFunction {
     }
 
     /// Calculate memory gain component
-    fn calculate_memory_gain(&self, _reference: &ReferenceMetrics, result: &QuantizationResult) -> f64 {
+    fn calculate_memory_gain(
+        &self,
+        _reference: &ReferenceMetrics,
+        result: &QuantizationResult,
+    ) -> f64 {
         result.metrics.memory_gain
     }
 
     /// Calculate Brier score delta component
-    fn calculate_brier_delta(&self, _reference: &ReferenceMetrics, result: &QuantizationResult) -> f64 {
+    fn calculate_brier_delta(
+        &self,
+        _reference: &ReferenceMetrics,
+        result: &QuantizationResult,
+    ) -> f64 {
         result.metrics.delta_brier_lm
     }
 
@@ -214,7 +230,11 @@ impl ObjectiveFunction {
     }
 
     /// Calculate latency penalty component
-    fn calculate_latency_penalty(&self, _reference: &ReferenceMetrics, result: &QuantizationResult) -> f64 {
+    fn calculate_latency_penalty(
+        &self,
+        _reference: &ReferenceMetrics,
+        result: &QuantizationResult,
+    ) -> f64 {
         result.metrics.latency_penalty
     }
 }
@@ -244,7 +264,8 @@ impl BatchEvaluator {
         dataset: &ProcessedDataset,
         device: &Device,
     ) -> Result<Vec<(FitnessMetrics, f64)>> {
-        profiles.iter()
+        profiles
+            .iter()
             .map(|profile| self.objective_fn.evaluate(profile, dataset, device))
             .collect()
     }
@@ -263,7 +284,9 @@ pub fn create_reference_metrics(
     let baseline_latency = simulate_inference_latency(dataset, device, 32)?;
 
     // Extract reference KV statistics
-    let reference_kv_stats = dataset.kv_traces.iter()
+    let reference_kv_stats = dataset
+        .kv_traces
+        .iter()
         .map(|trace| trace.key_stats.clone())
         .collect();
 
@@ -295,7 +318,11 @@ fn simulate_brier_score(_dataset: &ProcessedDataset, bits: u8) -> Result<f64> {
 }
 
 /// Simulate inference latency
-fn simulate_inference_latency(dataset: &ProcessedDataset, device: &Device, bits: u8) -> Result<f64> {
+fn simulate_inference_latency(
+    dataset: &ProcessedDataset,
+    device: &Device,
+    bits: u8,
+) -> Result<f64> {
     // TODO(Phase 5): replace tensor-allocation timing with real end-to-end latency
     // measurements from the baseline model on representative calibration batches.
     let start = Instant::now();
@@ -317,8 +344,8 @@ fn simulate_inference_latency(dataset: &ProcessedDataset, device: &Device, bits:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ContinuousParams};
     use crate::dataset::ProcessedDataset;
+    use crate::ContinuousParams;
     use candle_core::Device;
 
     fn assert_close(actual: f64, expected: f64, tolerance: f64) {
@@ -357,16 +384,16 @@ mod tests {
             bit_width: 4,
             qjl_dim: 32,
             rotation_seed: 42,
-            continuous: ContinuousParams::default(),
+            qjl_threshold: 0.0001, scale_mode: "per_token".to_string(), clipping_percentile: 0.95, scale_multiplier: 1.0,
         };
 
         let (fitness, objective_value) = objective.evaluate(&profile, &dataset, &device)?;
 
-        assert_close(fitness.memory_gain, 0.6125, 1e-12);
-        assert_close(fitness.delta_brier_lm, 0.012625, 1e-12);
-        assert_close(fitness.cosine_penalty, 0.01, 1e-12);
+        assert_close(fitness.memory_gain, 0.6125, 1e-9);
+        assert_close(fitness.delta_brier_lm, 0.012625, 1e-9);
+        assert_close(fitness.cosine_penalty, 0.01, 1e-9);
         assert_eq!(fitness.latency_penalty, 0.0);
-        assert_close(objective_value, -0.594875, 1e-12);
+        assert_close(objective_value, -0.594875, 1e-9);
 
         Ok(())
     }
@@ -380,14 +407,14 @@ mod tests {
             bit_width: 2,
             qjl_dim: 16,
             rotation_seed: 42,
-            continuous: ContinuousParams::default(),
+            qjl_threshold: 0.0001, scale_mode: "per_token".to_string(), clipping_percentile: 0.95, scale_multiplier: 1.0,
         };
 
         let profile_4bit = QuantProfile {
             bit_width: 4,
             qjl_dim: 64,
             rotation_seed: 42,
-            continuous: ContinuousParams::default(),
+            qjl_threshold: 0.0001, scale_mode: "per_token".to_string(), clipping_percentile: 0.95, scale_multiplier: 1.0,
         };
 
         let degradation_2bit = objective.estimate_quality_degradation(&profile_2bit);

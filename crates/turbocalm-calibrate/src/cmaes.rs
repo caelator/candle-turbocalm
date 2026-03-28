@@ -47,7 +47,11 @@ pub struct CmaEs {
 
 impl CmaEs {
     /// Create new CMA-ES optimizer
-    pub fn new(initial_params: &ContinuousParams, population_size: usize, seed: Option<u64>) -> Self {
+    pub fn new(
+        initial_params: &ContinuousParams,
+        population_size: usize,
+        seed: Option<u64>,
+    ) -> Self {
         let dimension = 3; // clipping_percentile, scale_multiplier, qjl_threshold
         let lambda = population_size;
         let mu = (lambda / 2).max(1);
@@ -63,15 +67,18 @@ impl CmaEs {
         let weights = Self::recombination_weights(mu);
         let mu_eff = 1.0 / weights.iter().map(|w| w.powi(2)).sum::<f64>();
 
-        let cc = (4.0 + mu_eff / dimension as f64) / (dimension as f64 + 4.0 + 2.0 * mu_eff / dimension as f64);
+        let cc = (4.0 + mu_eff / dimension as f64)
+            / (dimension as f64 + 4.0 + 2.0 * mu_eff / dimension as f64);
         let cs = (mu_eff + 2.0) / (dimension as f64 + mu_eff + 5.0);
         let c1 = 2.0 / ((dimension as f64 + 1.3).powi(2) + mu_eff);
         let cmu = 2.0 * (mu_eff - 2.0 + 1.0 / mu_eff) / ((dimension as f64 + 2.0).powi(2) + mu_eff);
-        let damps = 1.0 + 2.0 * (0.0_f64.max((mu_eff - 1.0) / (dimension as f64 + 1.0) - 1.0)).sqrt() + cs;
+        let damps =
+            1.0 + 2.0 * (0.0_f64.max((mu_eff - 1.0) / (dimension as f64 + 1.0) - 1.0)).sqrt() + cs;
 
         // Expected norm of N(0,I)
-        let chi_n = (dimension as f64).sqrt() *
-                   (1.0 - 1.0 / (4.0 * dimension as f64) + 1.0 / (21.0 * dimension as f64 * dimension as f64));
+        let chi_n = (dimension as f64).sqrt()
+            * (1.0 - 1.0 / (4.0 * dimension as f64)
+                + 1.0 / (21.0 * dimension as f64 * dimension as f64));
 
         // Initialize covariance as identity matrix
         let mut covariance = vec![vec![0.0; dimension]; dimension];
@@ -142,7 +149,8 @@ impl CmaEs {
         indices.sort_by(|&a, &b| fitness[a].partial_cmp(&fitness[b]).unwrap());
 
         // Convert parameters back to vectors
-        let param_vectors: Vec<Vec<f64>> = population.iter()
+        let param_vectors: Vec<Vec<f64>> = population
+            .iter()
             .map(|p| vec![p.clipping_percentile, p.scale_multiplier, p.qjl_threshold])
             .collect();
 
@@ -167,8 +175,10 @@ impl CmaEs {
         }
 
         // Update pc (evolution path for covariance)
-        let h_sig = if self.vector_norm(&self.ps) / (1.0 - (1.0 - self.cs).powi(2 * (self.generation + 1) as i32)).sqrt()
-                     < 1.4 + 2.0 / (self.dimension as f64 + 1.0) {
+        let h_sig = if self.vector_norm(&self.ps)
+            / (1.0 - (1.0 - self.cs).powi(2 * (self.generation + 1) as i32)).sqrt()
+            < 1.4 + 2.0 / (self.dimension as f64 + 1.0)
+        {
             1.0
         } else {
             0.0
@@ -240,7 +250,8 @@ impl CmaEs {
         debug_assert!(
             raw_weights.iter().all(|&w| w > 0.0),
             "All recombination weights should be positive for ranks 1..=mu. mu={}, weights={:?}",
-            mu, raw_weights
+            mu,
+            raw_weights
         );
 
         let sum_weights = raw_weights.iter().sum::<f64>();
@@ -265,7 +276,8 @@ impl CmaEs {
     }
 
     fn matrix_multiply_vector(&self, matrix: &[Vec<f64>], vector: &[f64]) -> Vec<f64> {
-        matrix.iter()
+        matrix
+            .iter()
             .map(|row| row.iter().zip(vector.iter()).map(|(a, b)| a * b).sum())
             .collect()
     }
@@ -319,7 +331,8 @@ mod tests {
             .map(|rank| (cmaes.mu as f64 + 0.5).ln() - (rank as f64).ln())
             .collect();
         let sum_raw = raw_weights.iter().sum::<f64>();
-        let expected_weights: Vec<f64> = raw_weights.iter().map(|weight| weight / sum_raw).collect();
+        let expected_weights: Vec<f64> =
+            raw_weights.iter().map(|weight| weight / sum_raw).collect();
 
         assert_eq!(cmaes.weights.len(), cmaes.mu);
         assert!(cmaes.weights.iter().all(|weight| *weight > 0.0));
@@ -329,7 +342,11 @@ mod tests {
             assert_close(*actual, *expected, 1e-12);
         }
 
-        let expected_mu_eff = 1.0 / expected_weights.iter().map(|weight| weight.powi(2)).sum::<f64>();
+        let expected_mu_eff = 1.0
+            / expected_weights
+                .iter()
+                .map(|weight| weight.powi(2))
+                .sum::<f64>();
         assert_close(cmaes.mu_eff, expected_mu_eff, 1e-12);
     }
 
@@ -351,7 +368,8 @@ mod tests {
         }
 
         // Test fitness evaluation and tell
-        let fitness: Vec<f64> = population1.iter()
+        let fitness: Vec<f64> = population1
+            .iter()
             .map(|params| {
                 // Simple fitness function - just return a random-like value based on params
                 params.clipping_percentile + params.scale_multiplier + params.qjl_threshold * 1e4

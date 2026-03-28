@@ -1,6 +1,6 @@
 use anyhow::Result;
-use std::collections::HashMap;
 use candle_core::Tensor;
+use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
 /// Tensor name remapper for converting between different model naming conventions
@@ -107,7 +107,10 @@ impl TensorNameRemapper {
     /// Add standard CALM mapping rules
     fn add_calm_mapping_rules(&mut self) {
         // Standard transformer layer mappings
-        self.add_replacement_rule("model.embed_tokens.weight", "transformer.embed_tokens.weight");
+        self.add_replacement_rule(
+            "model.embed_tokens.weight",
+            "transformer.embed_tokens.weight",
+        );
         self.add_replacement_rule("model.norm.weight", "transformer.norm.weight");
         self.add_replacement_rule("lm_head.weight", "lm_head.weight");
 
@@ -124,7 +127,10 @@ impl TensorNameRemapper {
 
         // Layer norm mappings
         self.add_replacement_rule(".input_layernorm.weight", ".input_layernorm.weight");
-        self.add_replacement_rule(".post_attention_layernorm.weight", ".post_attention_layernorm.weight");
+        self.add_replacement_rule(
+            ".post_attention_layernorm.weight",
+            ".post_attention_layernorm.weight",
+        );
 
         // CALM-specific mappings
         self.add_replacement_rule("model.layers.", "transformer.layers.");
@@ -215,7 +221,10 @@ impl MappingRule {
                     None
                 }
             }
-            MappingRule::RegexReplace { pattern, replacement } => {
+            MappingRule::RegexReplace {
+                pattern,
+                replacement,
+            } => {
                 if pattern.is_match(name) {
                     Some(pattern.replace_all(name, replacement).into_owned())
                 } else {
@@ -254,7 +263,10 @@ impl RemappingPresets {
         let mut remapper = TensorNameRemapper::new();
 
         // Embedding and output layers
-        remapper.add_replacement_rule("model.embed_tokens.weight", "transformer.embed_tokens.weight");
+        remapper.add_replacement_rule(
+            "model.embed_tokens.weight",
+            "transformer.embed_tokens.weight",
+        );
         remapper.add_replacement_rule("model.norm.weight", "transformer.norm.weight");
         remapper.add_replacement_rule("lm_head.weight", "lm_head.weight");
 
@@ -281,7 +293,10 @@ impl RemappingPresets {
         let mut remapper = TensorNameRemapper::new();
 
         // Reverse mappings
-        remapper.add_replacement_rule("transformer.embed_tokens.weight", "model.embed_tokens.weight");
+        remapper.add_replacement_rule(
+            "transformer.embed_tokens.weight",
+            "model.embed_tokens.weight",
+        );
         remapper.add_replacement_rule("transformer.norm.weight", "model.norm.weight");
         remapper.add_replacement_rule("transformer.layers.", "model.layers.");
 
@@ -341,7 +356,8 @@ impl RemappingUtils {
         let original_analysis = Self::analyze_tensor_patterns(original_names);
         let remapped_analysis = Self::analyze_tensor_patterns(remapped_names);
 
-        let tensor_count_preserved = original_analysis.total_tensors == remapped_analysis.total_tensors;
+        let tensor_count_preserved =
+            original_analysis.total_tensors == remapped_analysis.total_tensors;
 
         RemappingValidation {
             tensor_count_preserved,
@@ -455,7 +471,10 @@ mod tests {
 
         let original = "model.layers.0.self_attn.q_proj.weight";
         let mapped = remapper.map_tensor_name(original);
-        assert_eq!(mapped, Some("transformer.layers.0.attention.q_proj.weight".to_string()));
+        assert_eq!(
+            mapped,
+            Some("transformer.layers.0.attention.q_proj.weight".to_string())
+        );
     }
 
     #[test]
@@ -474,17 +493,35 @@ mod tests {
 
     #[test]
     fn test_component_identification() {
-        assert_eq!(identify_component_type("model.embed_tokens.weight"), "embedding");
-        assert_eq!(identify_component_type("layers.0.self_attn.q_proj.weight"), "attention");
-        assert_eq!(identify_component_type("layers.0.mlp.gate_proj.weight"), "mlp");
-        assert_eq!(identify_component_type("model.norm.weight"), "normalization");
+        assert_eq!(
+            identify_component_type("model.embed_tokens.weight"),
+            "embedding"
+        );
+        assert_eq!(
+            identify_component_type("layers.0.self_attn.q_proj.weight"),
+            "attention"
+        );
+        assert_eq!(
+            identify_component_type("layers.0.mlp.gate_proj.weight"),
+            "mlp"
+        );
+        assert_eq!(
+            identify_component_type("model.norm.weight"),
+            "normalization"
+        );
         assert_eq!(identify_component_type("lm_head.weight"), "output");
     }
 
     #[test]
     fn test_layer_number_extraction() {
-        assert_eq!(extract_layer_number("model.layers.0.self_attn.q_proj.weight"), Some(0));
-        assert_eq!(extract_layer_number("model.layers.15.mlp.gate_proj.weight"), Some(15));
+        assert_eq!(
+            extract_layer_number("model.layers.0.self_attn.q_proj.weight"),
+            Some(0)
+        );
+        assert_eq!(
+            extract_layer_number("model.layers.15.mlp.gate_proj.weight"),
+            Some(15)
+        );
         assert_eq!(extract_layer_number("model.embed_tokens.weight"), None);
     }
 

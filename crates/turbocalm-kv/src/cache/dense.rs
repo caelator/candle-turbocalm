@@ -28,7 +28,7 @@ impl KvCache for DenseKvCache {
         Ok(())
     }
 
-    fn get_key(&self) -> Result<Tensor> {
+    fn get_key(&mut self) -> Result<Tensor> {
         if self.keys.is_empty() {
             return Err(candle_core::Error::Msg("KV Cache is empty".to_string()));
         }
@@ -40,12 +40,17 @@ impl KvCache for DenseKvCache {
         Tensor::cat(&self.keys, cat_dim)
     }
 
-    fn get_value(&self) -> Result<Tensor> {
+    fn get_value(&mut self) -> Result<Tensor> {
         if self.values.is_empty() {
             return Err(candle_core::Error::Msg("KV Cache is empty".to_string()));
         }
         let rank = self.values[0].dims().len();
         let cat_dim = if rank >= 2 { rank - 2 } else { 0 };
         Tensor::cat(&self.values, cat_dim)
+    }
+
+    fn clear(&mut self) {
+        self.keys.clear();
+        self.values.clear();
     }
 }

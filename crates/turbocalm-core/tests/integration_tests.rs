@@ -65,10 +65,7 @@ mod integration {
         assert!(cached_2.is_ok());
 
         // Both should point to the same cached device
-        assert_eq!(
-            cached_1.unwrap() as *const _,
-            cached_2.unwrap() as *const _
-        );
+        assert_eq!(cached_1.unwrap() as *const _, cached_2.unwrap() as *const _);
 
         Ok(())
     }
@@ -87,7 +84,10 @@ mod integration {
         let best_device = device_info.best_device_type();
 
         // Should be CPU if no GPU available, or GPU if available
-        assert!(matches!(best_device, DeviceType::Cpu | DeviceType::Metal | DeviceType::Cuda));
+        assert!(matches!(
+            best_device,
+            DeviceType::Cpu | DeviceType::Metal | DeviceType::Cuda
+        ));
 
         println!("{}", device_info);
     }
@@ -110,7 +110,7 @@ mod integration {
 
     #[test]
     fn test_metrics_computation() -> Result<()> {
-        use candle_core::{Device, DType, Tensor};
+        use candle_core::{DType, Device, Tensor};
 
         // Create test tensors
         let device = Device::Cpu;
@@ -146,7 +146,7 @@ mod integration {
 
     #[test]
     fn test_memory_reporting() {
-        use candle_core::{Device, DType, Tensor};
+        use candle_core::{DType, Device, Tensor};
 
         // Create a test tensor
         let tensor = Tensor::zeros((1000, 1000), DType::F32, &Device::Cpu).unwrap();
@@ -332,7 +332,7 @@ mod stress_tests {
 
     #[test]
     fn test_large_tensor_metrics() -> Result<()> {
-        use candle_core::{Device, DType, Tensor};
+        use candle_core::{DType, Device, Tensor};
 
         // Create moderately large tensors
         let device = Device::Cpu;

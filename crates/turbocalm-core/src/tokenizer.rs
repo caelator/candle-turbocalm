@@ -45,7 +45,11 @@ impl TokenizerLoader {
     }
 
     /// Load tokenizer from HuggingFace model repository
-    pub fn load_from_hub(&self, model_id: &str, tokenizer_type: TokenizerType) -> Result<Tokenizer> {
+    pub fn load_from_hub(
+        &self,
+        model_id: &str,
+        tokenizer_type: TokenizerType,
+    ) -> Result<Tokenizer> {
         info!("Loading tokenizer from HuggingFace Hub: {}", model_id);
 
         let repo = self.api.model(model_id.to_string());
@@ -78,15 +82,13 @@ impl TokenizerLoader {
         }
 
         match tokenizer_type {
-            TokenizerType::Llama | TokenizerType::Bpe => {
-                Tokenizer::from_file(path).map_err(|e| {
-                    TurboCALMError::Tokenizer(TokenizerError::LoadingFailed(format!(
-                        "Failed to load tokenizer from {}: {}",
-                        path.display(),
-                        e
-                    )))
-                })
-            }
+            TokenizerType::Llama | TokenizerType::Bpe => Tokenizer::from_file(path).map_err(|e| {
+                TurboCALMError::Tokenizer(TokenizerError::LoadingFailed(format!(
+                    "Failed to load tokenizer from {}: {}",
+                    path.display(),
+                    e
+                )))
+            }),
             TokenizerType::SentencePiece => {
                 // For SentencePiece, we'd typically need to convert it to a JSON tokenizer
                 // This is a simplified implementation - in practice you might need
@@ -138,8 +140,14 @@ impl TokenizerUtils {
         let special_tokens = tokenizer.get_vocab(true);
 
         SpecialTokens {
-            bos_token_id: special_tokens.get("<s>").copied().or_else(|| special_tokens.get("<|begin_of_text|>").copied()),
-            eos_token_id: special_tokens.get("</s>").copied().or_else(|| special_tokens.get("<|end_of_text|>").copied()),
+            bos_token_id: special_tokens
+                .get("<s>")
+                .copied()
+                .or_else(|| special_tokens.get("<|begin_of_text|>").copied()),
+            eos_token_id: special_tokens
+                .get("</s>")
+                .copied()
+                .or_else(|| special_tokens.get("<|end_of_text|>").copied()),
             pad_token_id: special_tokens.get("<pad>").copied(),
             unk_token_id: special_tokens.get("<unk>").copied(),
         }
@@ -159,7 +167,11 @@ impl TokenizerUtils {
     }
 
     /// Decode token IDs to text
-    pub fn decode(tokenizer: &Tokenizer, token_ids: &[u32], skip_special_tokens: bool) -> Result<String> {
+    pub fn decode(
+        tokenizer: &Tokenizer,
+        token_ids: &[u32],
+        skip_special_tokens: bool,
+    ) -> Result<String> {
         tokenizer
             .decode(token_ids, skip_special_tokens)
             .map_err(|e| {
@@ -177,8 +189,16 @@ impl TokenizerUtils {
         add_special_tokens: bool,
     ) -> Result<Vec<Vec<u32>>> {
         tokenizer
-            .encode_batch(texts.iter().map(|s| s.as_str()).collect(), add_special_tokens)
-            .map(|encodings| encodings.into_iter().map(|enc| enc.get_ids().to_vec()).collect())
+            .encode_batch(
+                texts.iter().map(|s| s.as_str()).collect(),
+                add_special_tokens,
+            )
+            .map(|encodings| {
+                encodings
+                    .into_iter()
+                    .map(|enc| enc.get_ids().to_vec())
+                    .collect()
+            })
             .map_err(|e| {
                 TurboCALMError::Tokenizer(TokenizerError::TokenizationFailed(format!(
                     "Failed to encode batch: {}",
@@ -247,7 +267,10 @@ mod tests {
     fn test_tokenizer_type() {
         assert_eq!(TokenizerType::Llama.default_filename(), "tokenizer.json");
         assert_eq!(TokenizerType::Bpe.default_filename(), "tokenizer.json");
-        assert_eq!(TokenizerType::SentencePiece.default_filename(), "tokenizer.model");
+        assert_eq!(
+            TokenizerType::SentencePiece.default_filename(),
+            "tokenizer.model"
+        );
     }
 
     #[test]
@@ -283,7 +306,10 @@ mod tests {
         // We can't guarantee this works in all environments, so we just check it doesn't panic
         match result {
             Ok(_) => println!("TokenizerLoader created successfully"),
-            Err(e) => println!("TokenizerLoader creation failed (expected in some environments): {}", e),
+            Err(e) => println!(
+                "TokenizerLoader creation failed (expected in some environments): {}",
+                e
+            ),
         }
     }
 }

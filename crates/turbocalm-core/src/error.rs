@@ -134,10 +134,14 @@ impl fmt::Display for ConfigError {
             ConfigError::InvalidParameter { param, reason } => {
                 write!(f, "Invalid parameter '{}': {}", param, reason)
             }
-            ConfigError::MissingRequired(param) => write!(f, "Missing required parameter: {}", param),
+            ConfigError::MissingRequired(param) => {
+                write!(f, "Missing required parameter: {}", param)
+            }
             ConfigError::FileNotFound(path) => write!(f, "Configuration file not found: {}", path),
             ConfigError::InvalidFormat(msg) => write!(f, "Invalid configuration format: {}", msg),
-            ConfigError::ValidationFailed(msg) => write!(f, "Configuration validation failed: {}", msg),
+            ConfigError::ValidationFailed(msg) => {
+                write!(f, "Configuration validation failed: {}", msg)
+            }
         }
     }
 }
@@ -149,7 +153,9 @@ impl fmt::Display for DeviceError {
             DeviceError::DeviceTypeUnavailable(device_type) => {
                 write!(f, "Device type '{}' not available", device_type)
             }
-            DeviceError::InitializationFailed(msg) => write!(f, "Device initialization failed: {}", msg),
+            DeviceError::InitializationFailed(msg) => {
+                write!(f, "Device initialization failed: {}", msg)
+            }
             DeviceError::FeatureNotEnabled(feature) => {
                 write!(f, "Device feature '{}' not enabled", feature)
             }
@@ -162,11 +168,19 @@ impl fmt::Display for ModelError {
         match self {
             ModelError::FileNotFound(path) => write!(f, "Model file not found: {}", path),
             ModelError::IncompatibleVersion { expected, found } => {
-                write!(f, "Incompatible model version: expected {}, found {}", expected, found)
+                write!(
+                    f,
+                    "Incompatible model version: expected {}, found {}",
+                    expected, found
+                )
             }
-            ModelError::MissingComponent(component) => write!(f, "Missing model component: {}", component),
+            ModelError::MissingComponent(component) => {
+                write!(f, "Missing model component: {}", component)
+            }
             ModelError::LoadingFailed(msg) => write!(f, "Model loading failed: {}", msg),
-            ModelError::ArchitectureMismatch(msg) => write!(f, "Model architecture mismatch: {}", msg),
+            ModelError::ArchitectureMismatch(msg) => {
+                write!(f, "Model architecture mismatch: {}", msg)
+            }
         }
     }
 }
@@ -188,7 +202,9 @@ impl fmt::Display for HubError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             HubError::AuthenticationFailed => write!(f, "HuggingFace authentication failed"),
-            HubError::ModelNotFound(model_id) => write!(f, "Model '{}' not found on HuggingFace Hub", model_id),
+            HubError::ModelNotFound(model_id) => {
+                write!(f, "Model '{}' not found on HuggingFace Hub", model_id)
+            }
             HubError::DownloadFailed(msg) => write!(f, "Download failed: {}", msg),
             HubError::NetworkError(msg) => write!(f, "Network error: {}", msg),
             HubError::InvalidRepository(repo) => write!(f, "Invalid repository: {}", repo),
@@ -314,7 +330,10 @@ mod tests {
     #[test]
     fn test_error_display() {
         let config_err = ConfigError::MissingRequired("vocab_size".to_string());
-        assert_eq!(format!("{}", config_err), "Missing required parameter: vocab_size");
+        assert_eq!(
+            format!("{}", config_err),
+            "Missing required parameter: vocab_size"
+        );
 
         let main_err = TurboCALMError::Config(config_err);
         assert!(format!("{}", main_err).contains("Configuration error"));
@@ -339,9 +358,15 @@ mod tests {
     #[test]
     fn test_error_macros() {
         let err = config_error!("test_param", "test reason");
-        assert!(matches!(err, TurboCALMError::Config(ConfigError::InvalidParameter { .. })));
+        assert!(matches!(
+            err,
+            TurboCALMError::Config(ConfigError::InvalidParameter { .. })
+        ));
 
         let tensor_err = tensor_error!(shape_mismatch, "[2, 3]", "[3, 4]");
-        assert!(matches!(tensor_err, TurboCALMError::Tensor(TensorError::ShapeMismatch { .. })));
+        assert!(matches!(
+            tensor_err,
+            TurboCALMError::Tensor(TensorError::ShapeMismatch { .. })
+        ));
     }
 }

@@ -13,3 +13,4 @@ candle-nn.workspace = true
 safetensors.workspace = true
 rand.workspace = true
 turbocalm-core = { path = "../turbocalm-core" }
+turbocalm-kv = { path = "../turbocalm-kv" }

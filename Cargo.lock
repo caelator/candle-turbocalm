@@ -3081,6 +3081,7 @@ dependencies = [
  "tempfile",
  "tokenizers",
  "tracing",
+ "turbocalm-core",
 ]
 
 [[package]]
@@ -3151,6 +3152,7 @@ dependencies = [
  "safetensors 0.5.3",
  "serde",
  "serde_json",
+ "turbocalm-core",
 ]
 
 [[package]]
@@ -3165,6 +3167,7 @@ dependencies = [
  "serde",
  "serde_json",
  "turbocalm-core",
+ "turbocalm-kv",
 ]
 
 [[package]]

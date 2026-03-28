@@ -1,7 +1,10 @@
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "turbocalm", about = "Candle-TurboCALM: Native CALM inference with TurboQuant compression")]
+#[command(
+    name = "turbocalm",
+    about = "Candle-TurboCALM: Native CALM inference with TurboQuant compression"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -10,19 +13,54 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Inspect a CALM checkpoint
-    Inspect { #[arg(long)] model: String },
+    Inspect {
+        #[arg(long)]
+        model: String,
+    },
     /// Convert PyTorch checkpoint to safetensors
-    Convert { #[arg(long)] model: String, #[arg(long)] output: String },
+    Convert {
+        #[arg(long)]
+        model: String,
+        #[arg(long)]
+        output: String,
+    },
     /// Encode text to CALM embeddings
-    Encode { #[arg(long)] model: String, #[arg(long)] text: String },
+    Encode {
+        #[arg(long)]
+        model: String,
+        #[arg(long)]
+        text: String,
+    },
     /// Score text with CALM energy model
-    Score { #[arg(long)] model: String, #[arg(long)] text: String },
+    Score {
+        #[arg(long)]
+        model: String,
+        #[arg(long)]
+        text: String,
+    },
     /// Generate text using CALM
-    Generate { #[arg(long)] model: String, #[arg(long)] prompt: String, #[arg(long, default_value = "256")] max_tokens: usize },
+    Generate {
+        #[arg(long)]
+        model: String,
+        #[arg(long)]
+        prompt: String,
+        #[arg(long, default_value = "256")]
+        max_tokens: usize,
+    },
     /// Run TurboQuant evolutionary calibration
-    Calibrate { #[arg(long)] model: String, #[arg(long)] corpus: String, #[arg(long, default_value = "balanced")] profile: String },
+    Calibrate {
+        #[arg(long)]
+        model: String,
+        #[arg(long)]
+        corpus: String,
+        #[arg(long, default_value = "balanced")]
+        profile: String,
+    },
     /// Benchmark inference performance
-    Benchmark { #[arg(long)] model: String },
+    Benchmark {
+        #[arg(long)]
+        model: String,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -49,11 +87,19 @@ fn main() -> anyhow::Result<()> {
             println!("Scoring with {model}: {text}");
             todo!("Phase 2: energy scoring — needs LM weights loaded")
         }
-        Commands::Generate { model, prompt, max_tokens } => {
+        Commands::Generate {
+            model,
+            prompt,
+            max_tokens,
+        } => {
             println!("Generating with {model} (max {max_tokens} tokens): {prompt}");
             todo!("Phase 3: generation — needs full pipeline wired")
         }
-        Commands::Calibrate { model, corpus, profile } => {
+        Commands::Calibrate {
+            model,
+            corpus,
+            profile,
+        } => {
             println!("Calibrating {model} with {corpus} for {profile} profile");
             todo!("Phase 5: evolutionary calibration")
         }

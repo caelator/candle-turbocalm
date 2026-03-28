@@ -103,9 +103,7 @@ impl CalibrationDataset {
     /// Create a subset of the dataset
     pub fn subset(&self, max_samples: Option<usize>) -> Self {
         let samples = match max_samples {
-            Some(max) if max < self.samples.len() => {
-                self.samples[..max].to_vec()
-            }
+            Some(max) if max < self.samples.len() => self.samples[..max].to_vec(),
             _ => self.samples.clone(),
         };
 
@@ -156,7 +154,7 @@ impl ProcessedDataset {
             // Pad if necessary
             while tokens.len() < max_len {
                 tokens.push(0); // PAD token
-                mask.push(0);   // PAD mask
+                mask.push(0); // PAD mask
             }
 
             input_ids.push(tokens);
@@ -210,15 +208,24 @@ impl ProcessedDataset {
         let sum_abs: f64 = values.iter().map(|&x| (x as f64).abs()).sum();
         let mean_abs = sum_abs / n;
 
-        let variance: f64 = values.iter()
+        let variance: f64 = values
+            .iter()
             .map(|&x| (x as f64 - mean).powi(2))
-            .sum::<f64>() / n;
+            .sum::<f64>()
+            / n;
         let std_dev = variance.sqrt();
 
-        let min_val = values.iter().map(|&x| x as f64).fold(f64::INFINITY, f64::min);
-        let max_val = values.iter().map(|&x| x as f64).fold(f64::NEG_INFINITY, f64::max);
+        let min_val = values
+            .iter()
+            .map(|&x| x as f64)
+            .fold(f64::INFINITY, f64::min);
+        let max_val = values
+            .iter()
+            .map(|&x| x as f64)
+            .fold(f64::NEG_INFINITY, f64::max);
 
-        let l2_norm = values.iter()
+        let l2_norm = values
+            .iter()
             .map(|&x| (x as f64).powi(2))
             .sum::<f64>()
             .sqrt();
@@ -253,17 +260,11 @@ impl ProcessedDataset {
         }
 
         // Create tensors
-        let input_ids_tensor = Tensor::from_slice(
-            &batch_input_ids,
-            (batch_size, seq_len),
-            &self.device,
-        )?;
+        let input_ids_tensor =
+            Tensor::from_slice(&batch_input_ids, (batch_size, seq_len), &self.device)?;
 
-        let attention_mask_tensor = Tensor::from_slice(
-            &batch_attention_masks,
-            (batch_size, seq_len),
-            &self.device,
-        )?;
+        let attention_mask_tensor =
+            Tensor::from_slice(&batch_attention_masks, (batch_size, seq_len), &self.device)?;
 
         Ok(DataBatch {
             input_ids: input_ids_tensor,
@@ -302,9 +303,18 @@ mod tests {
         let mut temp_file = NamedTempFile::new()?;
 
         // Write test JSONL data
-        writeln!(temp_file, r#"{{"text": "Hello world", "metadata": {{"source": "test"}}}}"#)?;
-        writeln!(temp_file, r#"{{"text": "This is a test sentence for calibration."}}"#)?;
-        writeln!(temp_file, r#"{{"text": "Another example with different content."}}"#)?;
+        writeln!(
+            temp_file,
+            r#"{{"text": "Hello world", "metadata": {{"source": "test"}}}}"#
+        )?;
+        writeln!(
+            temp_file,
+            r#"{{"text": "This is a test sentence for calibration."}}"#
+        )?;
+        writeln!(
+            temp_file,
+            r#"{{"text": "Another example with different content."}}"#
+        )?;
 
         let dataset = CalibrationDataset::from_jsonl(temp_file.path())?;
 

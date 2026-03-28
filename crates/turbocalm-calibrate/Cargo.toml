@@ -17,6 +17,7 @@ rand_distr.workspace = true
 half.workspace = true
 tracing.workspace = true
 chrono = "0.4"
+turbocalm-core = { path = "../turbocalm-core" }
 
 # For testing
 [dev-dependencies]

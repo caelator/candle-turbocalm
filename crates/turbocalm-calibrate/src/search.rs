@@ -5,16 +5,16 @@
 //! 2. Inner loop: CMA-ES optimization of continuous parameters
 
 use crate::{
-    CalibrationConfig, ContinuousParams, FitnessMetrics, QuantProfile,
     cmaes::CmaEs,
     dataset::ProcessedDataset,
-    objective::{BatchEvaluator, create_reference_metrics},
+    objective::{create_reference_metrics, BatchEvaluator},
     pareto::{ParetoFront, ParetoSolution},
+    CalibrationConfig, ContinuousParams, FitnessMetrics, QuantProfile,
 };
 use anyhow::Result;
 use candle_core::Device;
 use std::collections::HashMap;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
 /// Search orchestrator for calibration optimization
 pub struct CalibrationSearch {
@@ -71,10 +71,7 @@ pub struct SearchStatistics {
 
 impl CalibrationSearch {
     /// Create new calibration search
-    pub fn new(
-        config: CalibrationConfig,
-        device: Device,
-    ) -> Result<Self> {
+    pub fn new(config: CalibrationConfig, device: Device) -> Result<Self> {
         let evaluator = BatchEvaluator::new(config.weights.clone());
         let pareto_front = ParetoFront::new(Some(100)); // Limit Pareto front size
 
@@ -94,8 +91,10 @@ impl CalibrationSearch {
         dataset: &ProcessedDataset,
         progress_callback: Option<Box<dyn Fn(&SearchProgress)>>,
     ) -> Result<SearchResults> {
-        info!("Starting calibration search with {} discrete configurations",
-              self.count_discrete_configs());
+        info!(
+            "Starting calibration search with {} discrete configurations",
+            self.count_discrete_configs()
+        );
 
         let start_time = std::time::Instant::now();
 
@@ -121,8 +120,8 @@ impl CalibrationSearch {
                         break;
                     }
 
-                    let discrete_config = format!("{}bit_{}qjl_{}seed",
-                                                  bit_width, qjl_dim, rotation_seed);
+                    let discrete_config =
+                        format!("{}bit_{}qjl_{}seed", bit_width, qjl_dim, rotation_seed);
 
                     info!("Exploring discrete config: {}", discrete_config);
 
@@ -147,21 +146,24 @@ impl CalibrationSearch {
                         let progress = SearchProgress {
                             iteration: self.iteration_count,
                             total_iterations: total_evaluations,
-                            current_discrete_config: format!("{}bit_{}qjl_{}seed",
-                                                             bit_width, qjl_dim, rotation_seed),
+                            current_discrete_config: format!(
+                                "{}bit_{}qjl_{}seed",
+                                bit_width, qjl_dim, rotation_seed
+                            ),
                             pareto_size: self.pareto_front.size(),
-                            best_objective: self.pareto_front.get_best_by_objective()
+                            best_objective: self
+                                .pareto_front
+                                .get_best_by_objective()
                                 .map_or(f64::INFINITY, |s| s.objective_value),
-                            best_fitness: self.pareto_front.get_best_by_objective()
-                                .map_or(
-                                    FitnessMetrics {
-                                        memory_gain: 0.0,
-                                        delta_brier_lm: f64::INFINITY,
-                                        cosine_penalty: 1.0,
-                                        latency_penalty: 1.0
-                                    },
-                                    |s| s.fitness.clone()
-                                ),
+                            best_fitness: self.pareto_front.get_best_by_objective().map_or(
+                                FitnessMetrics {
+                                    memory_gain: 0.0,
+                                    delta_brier_lm: f64::INFINITY,
+                                    cosine_penalty: 1.0,
+                                    latency_penalty: 1.0,
+                                },
+                                |s| s.fitness.clone(),
+                            ),
                         };
                         callback(&progress);
                     }
@@ -173,7 +175,9 @@ impl CalibrationSearch {
 
         // Generate final results
         let pareto_solutions = self.pareto_front.get_solutions().to_vec();
-        let best_solution = self.pareto_front.get_best_by_objective()
+        let best_solution = self
+            .pareto_front
+            .get_best_by_objective()
             .ok_or_else(|| anyhow::anyhow!("No solutions found"))?
             .clone();
 
@@ -189,8 +193,12 @@ impl CalibrationSearch {
             evaluations_per_second: total_evaluations as f64 / total_time.as_secs_f64(),
         };
 
-        info!("Search completed: {} solutions in Pareto front, {} total evaluations in {:.2}s",
-              pareto_solutions.len(), total_evaluations, total_time.as_secs_f64());
+        info!(
+            "Search completed: {} solutions in Pareto front, {} total evaluations in {:.2}s",
+            pareto_solutions.len(),
+            total_evaluations,
+            total_time.as_secs_f64()
+        );
 
         Ok(SearchResults {
             pareto_solutions,
@@ -208,8 +216,10 @@ impl CalibrationSearch {
         dataset: &ProcessedDataset,
         _progress_callback: &Option<Box<dyn Fn(&SearchProgress)>>,
     ) -> Result<(ParetoSolution, usize)> {
-        debug!("Starting CMA-ES for bit_width={}, qjl_dim={}, rotation_seed={}",
-               bit_width, qjl_dim, rotation_seed);
+        debug!(
+            "Starting CMA-ES for bit_width={}, qjl_dim={}, rotation_seed={}",
+            bit_width, qjl_dim, rotation_seed
+        );
 
         // Initialize CMA-ES with default continuous parameters
         let initial_continuous = ContinuousParams::default();
@@ -231,20 +241,27 @@ impl CalibrationSearch {
             let continuous_population = cmaes.ask();
 
             // Create full profiles for evaluation
-            let profiles: Vec<QuantProfile> = continuous_population.iter()
+            let profiles: Vec<QuantProfile> = continuous_population
+                .iter()
                 .map(|continuous| QuantProfile {
                     bit_width,
                     qjl_dim,
                     rotation_seed,
-                    continuous: continuous.clone(),
+                    qjl_threshold: continuous.qjl_threshold as f32,
+                    scale_mode: "per_token".to_string(),
+                    clipping_percentile: continuous.clipping_percentile,
+                    scale_multiplier: continuous.scale_multiplier,
                 })
                 .collect();
 
             // Evaluate population
-            let evaluations = self.evaluator.evaluate_batch(&profiles, dataset, &self.device)?;
+            let evaluations = self
+                .evaluator
+                .evaluate_batch(&profiles, dataset, &self.device)?;
 
             // Extract fitness values for CMA-ES (minimize objective)
-            let fitness_values: Vec<f64> = evaluations.iter()
+            let fitness_values: Vec<f64> = evaluations
+                .iter()
                 .map(|(_, objective)| *objective)
                 .collect();
 
@@ -262,7 +279,10 @@ impl CalibrationSearch {
                 self.pareto_front.add_solution(solution.clone());
 
                 // Track best solution for this discrete config
-                if best_solution.as_ref().map_or(true, |best| objective < &best.objective_value) {
+                if best_solution
+                    .as_ref()
+                    .map_or(true, |best| objective < &best.objective_value)
+                {
                     best_solution = Some(solution);
                 }
             }
@@ -277,20 +297,22 @@ impl CalibrationSearch {
             }
         }
 
-        let final_solution = best_solution
-            .ok_or_else(|| anyhow::anyhow!("No valid solutions found in CMA-ES"))?;
+        let final_solution =
+            best_solution.ok_or_else(|| anyhow::anyhow!("No valid solutions found in CMA-ES"))?;
 
-        debug!("CMA-ES completed: {} iterations, best objective = {:.6}",
-               cmaes_iteration, final_solution.objective_value);
+        debug!(
+            "CMA-ES completed: {} iterations, best objective = {:.6}",
+            cmaes_iteration, final_solution.objective_value
+        );
 
         Ok((final_solution, cmaes_iteration))
     }
 
     /// Count total discrete configurations
     fn count_discrete_configs(&self) -> usize {
-        self.config.discrete.bit_widths.len() *
-        self.config.discrete.qjl_dims.len() *
-        self.config.discrete.rotation_seeds.len()
+        self.config.discrete.bit_widths.len()
+            * self.config.discrete.qjl_dims.len()
+            * self.config.discrete.rotation_seeds.len()
     }
 
     /// Get current Pareto front
@@ -323,7 +345,10 @@ impl SearchResume {
             search.pareto_front.add_solution(solution.clone());
         }
 
-        info!("Resumed search with {} previous solutions", self.previous_solutions.len());
+        info!(
+            "Resumed search with {} previous solutions",
+            self.previous_solutions.len()
+        );
     }
 }
 
@@ -397,7 +422,10 @@ mod tests {
         let focused = SearchFactory::create_focused_search(device.clone(), Some(4), Some(32))?;
         assert_eq!(focused.config.discrete.bit_widths, vec![4]);
         assert_eq!(focused.config.discrete.qjl_dims, vec![32]);
-        assert_eq!(focused.config.discrete.rotation_seeds, vec![42, 137, 256, 512]);
+        assert_eq!(
+            focused.config.discrete.rotation_seeds,
+            vec![42, 137, 256, 512]
+        );
         assert_eq!(focused.config.max_cmaes_iterations, 30);
         assert_eq!(focused.config.max_total_iterations, 500);
 

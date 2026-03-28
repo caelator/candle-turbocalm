@@ -11,3 +11,4 @@ serde_json.workspace = true
 candle-core.workspace = true
 safetensors.workspace = true
 rand.workspace = true
+turbocalm-core = { path = "../turbocalm-core" }

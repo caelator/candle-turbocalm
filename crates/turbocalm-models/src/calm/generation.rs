@@ -11,6 +11,8 @@ use rand::{
     Rng, SeedableRng,
 };
 use turbocalm_core::CALMConfig;
+use turbocalm_core::QuantProfile;
+use turbocalm_kv::cache::{dense::DenseKvCache, KvCache, TurboKvCache};
 
 use super::autoencoder::{CalmAutoencoder, CalmAutoencoderConfig};
 
@@ -30,6 +32,18 @@ impl Default for CalmGenerationConfig {
             num_samples: 200,
             seed: 0,
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum CalmKvCacheBackend {
+    Turbo(QuantProfile),
+    Dense,
+}
+
+impl Default for CalmKvCacheBackend {
+    fn default() -> Self {
+        Self::Turbo(QuantProfile::default())
     }
 }
 
@@ -177,7 +191,6 @@ impl RotaryEmbedding {
     }
 }
 
-#[derive(Debug, Clone)]
 struct Attention {
     q_proj: Linear,
     k_proj: Linear,
@@ -188,17 +201,26 @@ struct Attention {
     num_kv_groups: usize,
     head_dim: usize,
     rotary_emb: Arc<RotaryEmbedding>,
-    kv_cache: Option<(Tensor, Tensor)>,
+    kv_cache: Box<dyn KvCache>,
 }
 
 impl Attention {
-    fn load(rotary_emb: Arc<RotaryEmbedding>, config: &CALMConfig, vb: VarBuilder) -> Result<Self> {
+    fn load(
+        rotary_emb: Arc<RotaryEmbedding>,
+        config: &CALMConfig,
+        cache_backend: &CalmKvCacheBackend,
+        vb: VarBuilder,
+    ) -> Result<Self> {
         let hidden_size = config.hidden_size as usize;
         let num_heads = config.num_attention_heads as usize;
         let num_kv_heads = config.num_key_value_heads() as usize;
         let head_dim = hidden_size / num_heads;
-        let q_proj =
-            linear_with_optional_bias(hidden_size, hidden_size, config.attention_bias, vb.pp("q_proj"))?;
+        let q_proj = linear_with_optional_bias(
+            hidden_size,
+            hidden_size,
+            config.attention_bias,
+            vb.pp("q_proj"),
+        )?;
         let k_proj = linear_with_optional_bias(
             hidden_size,
             num_kv_heads * head_dim,
@@ -211,8 +233,12 @@ impl Attention {
             config.attention_bias,
             vb.pp("v_proj"),
         )?;
-        let o_proj =
-            linear_with_optional_bias(hidden_size, hidden_size, config.attention_bias, vb.pp("o_proj"))?;
+        let o_proj = linear_with_optional_bias(
+            hidden_size,
+            hidden_size,
+            config.attention_bias,
+            vb.pp("o_proj"),
+        )?;
         Ok(Self {
             q_proj,
             k_proj,
@@ -223,7 +249,7 @@ impl Attention {
             num_kv_groups: num_heads / num_kv_heads,
             head_dim,
             rotary_emb,
-            kv_cache: None,
+            kv_cache: build_kv_cache(cache_backend),
         })
     }
 
@@ -259,15 +285,20 @@ impl Attention {
             .transpose(1, 2)
             .context("failed to transpose v projection")?;
 
-        let (q, k) = self.rotary_emb.apply_rotary_emb_qkv(&q, &k, seqlen_offset)?;
-        let (k, v) = match &self.kv_cache {
-            Some((prev_k, prev_v)) => (
-                Tensor::cat(&[prev_k, &k], 2).context("failed to append attention k cache")?,
-                Tensor::cat(&[prev_v, &v], 2).context("failed to append attention v cache")?,
-            ),
-            None => (k, v),
-        };
-        self.kv_cache = Some((k.clone(), v.clone()));
+        let (q, k) = self
+            .rotary_emb
+            .apply_rotary_emb_qkv(&q, &k, seqlen_offset)?;
+        self.kv_cache
+            .append(&k, &v)
+            .context("failed to append attention KV cache")?;
+        let k = self
+            .kv_cache
+            .get_key()
+            .context("failed to retrieve attention k cache")?;
+        let v = self
+            .kv_cache
+            .get_value()
+            .context("failed to retrieve attention v cache")?;
 
         let k = repeat_kv(&k, self.num_kv_groups)?.contiguous()?;
         let v = repeat_kv(&v, self.num_kv_groups)?.contiguous()?;
@@ -299,11 +330,10 @@ impl Attention {
     }
 
     fn clear_kv_cache(&mut self) {
-        self.kv_cache = None;
+        self.kv_cache.clear();
     }
 }
 
-#[derive(Debug, Clone)]
 struct DecoderLayer {
     self_attn: Attention,
     mlp: LlamaStyleMlp,
@@ -312,9 +342,14 @@ struct DecoderLayer {
 }
 
 impl DecoderLayer {
-    fn load(rotary_emb: Arc<RotaryEmbedding>, config: &CALMConfig, vb: VarBuilder) -> Result<Self> {
+    fn load(
+        rotary_emb: Arc<RotaryEmbedding>,
+        config: &CALMConfig,
+        cache_backend: &CalmKvCacheBackend,
+        vb: VarBuilder,
+    ) -> Result<Self> {
         Ok(Self {
-            self_attn: Attention::load(rotary_emb, config, vb.pp("attention"))?,
+            self_attn: Attention::load(rotary_emb, config, cache_backend, vb.pp("attention"))?,
             mlp: LlamaStyleMlp::load(vb.pp("mlp"), config)?,
             input_layernorm: RmsNormLayer::load(
                 config.hidden_size as usize,
@@ -337,9 +372,9 @@ impl DecoderLayer {
     ) -> Result<Tensor> {
         let residual = hidden_states;
         let hidden_states = self.input_layernorm.forward(hidden_states)?;
-        let hidden_states = self
-            .self_attn
-            .forward(&hidden_states, attention_mask, seqlen_offset)?;
+        let hidden_states =
+            self.self_attn
+                .forward(&hidden_states, attention_mask, seqlen_offset)?;
         let hidden_states = residual
             .broadcast_add(&hidden_states)
             .context("failed to add attention residual")?;
@@ -357,7 +392,6 @@ impl DecoderLayer {
     }
 }
 
-#[derive(Debug, Clone)]
 pub struct CalmDecoder {
     embed_tokens: Embedding,
     layers: Vec<DecoderLayer>,
@@ -367,7 +401,11 @@ pub struct CalmDecoder {
 }
 
 impl CalmDecoder {
-    pub fn load(vb: VarBuilder, config: &CALMConfig) -> Result<Self> {
+    pub fn load(
+        vb: VarBuilder,
+        config: &CALMConfig,
+        cache_backend: &CalmKvCacheBackend,
+    ) -> Result<Self> {
         let rotary_emb = Arc::new(RotaryEmbedding::new(config, vb.dtype(), vb.device())?);
         let embed_tokens = candle_nn::embedding(
             config.vocab_size as usize,
@@ -380,6 +418,7 @@ impl CalmDecoder {
             layers.push(DecoderLayer::load(
                 rotary_emb.clone(),
                 config,
+                cache_backend,
                 vb.pp(format!("layers.{layer_idx}")),
             )?);
         }
@@ -402,7 +441,11 @@ impl CalmDecoder {
             .context("failed to embed transformer token IDs")
     }
 
-    pub fn forward_embeds(&mut self, inputs_embeds: &Tensor, seqlen_offset: usize) -> Result<Tensor> {
+    pub fn forward_embeds(
+        &mut self,
+        inputs_embeds: &Tensor,
+        seqlen_offset: usize,
+    ) -> Result<Tensor> {
         let (batch_size, seq_len, _) = inputs_embeds.dims3()?;
         let attention_mask = if seq_len <= 1 {
             None
@@ -412,7 +455,8 @@ impl CalmDecoder {
 
         let mut hidden_states = inputs_embeds.clone();
         for layer in self.layers.iter_mut() {
-            hidden_states = layer.forward(&hidden_states, attention_mask.as_ref(), seqlen_offset)?;
+            hidden_states =
+                layer.forward(&hidden_states, attention_mask.as_ref(), seqlen_offset)?;
         }
         self.norm.forward(&hidden_states)
     }
@@ -424,9 +468,7 @@ impl CalmDecoder {
         seqlen_offset: usize,
     ) -> Result<Tensor> {
         let mask: Vec<f32> = (0..target_len)
-            .flat_map(|i| {
-                (0..target_len).map(move |j| if i < j { f32::NEG_INFINITY } else { 0.0 })
-            })
+            .flat_map(|i| (0..target_len).map(move |j| if i < j { f32::NEG_INFINITY } else { 0.0 }))
             .collect();
         let mask = Tensor::from_vec(mask, (target_len, target_len), &self.device)
             .context("failed to build decoder attention mask")?;
@@ -551,7 +593,8 @@ impl MlpBlock {
             .in_ln
             .forward(x)
             .context("failed to run MLPBlock in_ln")?;
-        let h = Tensor::cat(&[&h, y], D::Minus1).context("failed to concatenate MLPBlock inputs")?;
+        let h =
+            Tensor::cat(&[&h, y], D::Minus1).context("failed to concatenate MLPBlock inputs")?;
         let h = self
             .linears_0
             .forward(&h)
@@ -646,7 +689,10 @@ impl MlpGenerator {
 
         let mut mlp_blocks = Vec::with_capacity(num_mlp_layers);
         for idx in 0..num_mlp_layers {
-            mlp_blocks.push(MlpBlock::load(vb.pp(format!("mlp_blocks.{idx}")), hidden_size)?);
+            mlp_blocks.push(MlpBlock::load(
+                vb.pp(format!("mlp_blocks.{idx}")),
+                hidden_size,
+            )?);
         }
 
         Ok(Self {
@@ -730,6 +776,20 @@ impl CalmGenerationModel {
         config: CALMConfig,
         autoencoder_config: CalmAutoencoderConfig,
     ) -> Result<Self> {
+        Self::load_with_kv_cache_backend(
+            vb,
+            config,
+            autoencoder_config,
+            CalmKvCacheBackend::default(),
+        )
+    }
+
+    pub fn load_with_kv_cache_backend(
+        vb: VarBuilder,
+        config: CALMConfig,
+        autoencoder_config: CalmAutoencoderConfig,
+        kv_cache_backend: CalmKvCacheBackend,
+    ) -> Result<Self> {
         config.validate()?;
 
         let patch_size = config.patch_size as usize;
@@ -764,8 +824,12 @@ impl CalmGenerationModel {
         };
 
         Ok(Self {
-            autoencoder: CalmAutoencoder::load_prefixed(vb.clone(), autoencoder_prefix, autoencoder_config)?,
-            transformer: CalmDecoder::load(vb.pp("transformer"), &config)?,
+            autoencoder: CalmAutoencoder::load_prefixed(
+                vb.clone(),
+                autoencoder_prefix,
+                autoencoder_config,
+            )?,
+            transformer: CalmDecoder::load(vb.pp("transformer"), &config, &kv_cache_backend)?,
             embed_proj: PatchEmbeddingProjection::load(vb.pp("embed_proj"), &config)?,
             generative_head: MlpGenerator::load(vb.pp(generative_prefix), &config)?,
             config,
@@ -779,9 +843,27 @@ impl CalmGenerationModel {
         dtype: DType,
         device: &Device,
     ) -> Result<Self> {
+        Self::from_safetensors_with_kv_cache_backend(
+            paths,
+            config,
+            autoencoder_config,
+            dtype,
+            device,
+            CalmKvCacheBackend::default(),
+        )
+    }
+
+    pub fn from_safetensors_with_kv_cache_backend<P: AsRef<Path>>(
+        paths: &[P],
+        config: CALMConfig,
+        autoencoder_config: CalmAutoencoderConfig,
+        dtype: DType,
+        device: &Device,
+        kv_cache_backend: CalmKvCacheBackend,
+    ) -> Result<Self> {
         let vb = unsafe { VarBuilder::from_mmaped_safetensors(paths, dtype, device) }
             .context("failed to mmap CALM safetensors weights")?;
-        Self::load(vb, config, autoencoder_config)
+        Self::load_with_kv_cache_backend(vb, config, autoencoder_config, kv_cache_backend)
     }
 
     pub fn from_pth<P: AsRef<Path>>(
@@ -791,8 +873,27 @@ impl CalmGenerationModel {
         dtype: DType,
         device: &Device,
     ) -> Result<Self> {
-        let vb = VarBuilder::from_pth(path, dtype, device).context("failed to load PyTorch checkpoint")?;
-        Self::load(vb, config, autoencoder_config)
+        Self::from_pth_with_kv_cache_backend(
+            path,
+            config,
+            autoencoder_config,
+            dtype,
+            device,
+            CalmKvCacheBackend::default(),
+        )
+    }
+
+    pub fn from_pth_with_kv_cache_backend<P: AsRef<Path>>(
+        path: P,
+        config: CALMConfig,
+        autoencoder_config: CalmAutoencoderConfig,
+        dtype: DType,
+        device: &Device,
+        kv_cache_backend: CalmKvCacheBackend,
+    ) -> Result<Self> {
+        let vb = VarBuilder::from_pth(path, dtype, device)
+            .context("failed to load PyTorch checkpoint")?;
+        Self::load_with_kv_cache_backend(vb, config, autoencoder_config, kv_cache_backend)
     }
 
     pub fn device(&self) -> &Device {
@@ -821,10 +922,15 @@ impl CalmGenerationModel {
 
         let prompt_pad = (patch_size - (prompt_token_ids.len() % patch_size)) % patch_size;
         let mut working_ids = prompt_token_ids.clone();
-        working_ids.extend(std::iter::repeat(pad_token_id).take(prompt_pad).map(|id| id as u32));
+        working_ids.extend(
+            std::iter::repeat(pad_token_id)
+                .take(prompt_pad)
+                .map(|id| id as u32),
+        );
 
-        let prompt_tensor = Tensor::from_vec(working_ids.clone(), (1, working_ids.len()), self.device())
-            .context("failed to create prompt tensor")?;
+        let prompt_tensor =
+            Tensor::from_vec(working_ids.clone(), (1, working_ids.len()), self.device())
+                .context("failed to create prompt tensor")?;
         let prompt_latents = self.autoencoder.encode_chunked(&prompt_tensor)?;
 
         let mut generated_token_ids = Vec::new();
@@ -839,14 +945,17 @@ impl CalmGenerationModel {
             } else {
                 // For subsequent iterations, encode the latest tokens to get their latents
                 let current_tokens = working_ids[working_ids.len() - patch_size..].to_vec();
-                let current_tensor = Tensor::from_vec(current_tokens, (1, patch_size), self.device())
-                    .context("failed to create current generation window")?;
+                let current_tensor =
+                    Tensor::from_vec(current_tokens, (1, patch_size), self.device())
+                        .context("failed to create current generation window")?;
                 let current_latents = self.autoencoder.encode_chunked(&current_tensor)?;
                 self.latent_patches_to_embeddings(&current_latents)?
             };
 
             let num_patches = patch_embeddings.dims()[1];
-            let hidden_states = self.transformer.forward_embeds(&patch_embeddings, seqlen_offset)?;
+            let hidden_states = self
+                .transformer
+                .forward_embeds(&patch_embeddings, seqlen_offset)?;
             seqlen_offset += num_patches;
 
             let last_hidden_state = hidden_states
@@ -950,7 +1059,10 @@ impl CalmGenerationModel {
             .context("failed to extract candidate latents")?;
 
         let mut patch_counts = HashMap::<Vec<u32>, (usize, Vec<f32>)>::new();
-        for (tokens, latent) in candidate_tokens.into_iter().zip(candidate_latents.into_iter()) {
+        for (tokens, latent) in candidate_tokens
+            .into_iter()
+            .zip(candidate_latents.into_iter())
+        {
             patch_counts
                 .entry(tokens)
                 .and_modify(|entry| entry.0 += 1)
@@ -974,12 +1086,9 @@ impl CalmGenerationModel {
             let distribution = WeightedIndex::new(&weights)
                 .context("failed to build temperature sampling distribution")?;
             let selected = candidates[distribution.sample(rng)];
-            let latent = Tensor::from_vec(
-                selected.1 .1.clone(),
-                (1, 1, latent_size),
-                self.device(),
-            )
-            .context("failed to create selected latent tensor")?;
+            let latent =
+                Tensor::from_vec(selected.1 .1.clone(), (1, 1, latent_size), self.device())
+                    .context("failed to create selected latent tensor")?;
             return Ok((latent, selected.0.clone()));
         }
 
@@ -1004,7 +1113,11 @@ impl CalmGenerationModel {
         let hidden_size = self.config.hidden_size as usize;
 
         if latent_size != self.config.latent_size as usize {
-            bail!("Expected latent_size={}, got {}", self.config.latent_size, latent_size);
+            bail!(
+                "Expected latent_size={}, got {}",
+                self.config.latent_size,
+                latent_size
+            );
         }
 
         // Create a simple linear projection from latent space to hidden space
@@ -1028,6 +1141,13 @@ pub fn generate(
     options: &CalmGenerationConfig,
 ) -> Result<CalmGenerationOutput> {
     model.generate(prompt_token_ids, options)
+}
+
+fn build_kv_cache(cache_backend: &CalmKvCacheBackend) -> Box<dyn KvCache> {
+    match cache_backend {
+        CalmKvCacheBackend::Turbo(profile) => Box::new(TurboKvCache::new(profile.clone())),
+        CalmKvCacheBackend::Dense => Box::new(DenseKvCache::new()),
+    }
 }
 
 fn linear_with_optional_bias(
@@ -1113,7 +1233,8 @@ mod tests {
     fn generate_returns_patchwise_latent_shapes() -> Result<()> {
         let device = Device::Cpu;
         let vb = VarBuilder::zeros(DType::F32, &device);
-        let mut model = CalmGenerationModel::load(vb, test_calm_config(), test_autoencoder_config())?;
+        let mut model =
+            CalmGenerationModel::load(vb, test_calm_config(), test_autoencoder_config())?;
         let output = model.generate(
             &[1, 2, 3, 4],
             &CalmGenerationConfig {
@@ -1132,6 +1253,30 @@ mod tests {
     }
 
     #[test]
+    fn generate_supports_dense_kv_cache_backend() -> Result<()> {
+        let device = Device::Cpu;
+        let vb = VarBuilder::zeros(DType::F32, &device);
+        let mut model = CalmGenerationModel::load_with_kv_cache_backend(
+            vb,
+            test_calm_config(),
+            test_autoencoder_config(),
+            CalmKvCacheBackend::Dense,
+        )?;
+        let output = model.generate(
+            &[1, 2, 3, 4],
+            &CalmGenerationConfig {
+                max_new_tokens: 4,
+                temperature: 1.0,
+                num_samples: 8,
+                seed: 7,
+            },
+        )?;
+
+        assert_eq!(output.generated_token_ids.len(), 4);
+        Ok(())
+    }
+
+    #[test]
     fn temperature_validation_rejects_non_reciprocal_values() {
         let err = validate_temperature(0.3).unwrap_err();
         assert!(err.to_string().contains("reciprocal"));
@@ -1141,7 +1286,8 @@ mod tests {
     fn test_latent_conditioning_changes_output() -> Result<()> {
         let device = Device::Cpu;
         let vb = VarBuilder::zeros(DType::F32, &device);
-        let mut model = CalmGenerationModel::load(vb, test_calm_config(), test_autoencoder_config())?;
+        let mut model =
+            CalmGenerationModel::load(vb, test_calm_config(), test_autoencoder_config())?;
 
         let config = CalmGenerationConfig {
             max_new_tokens: 2,

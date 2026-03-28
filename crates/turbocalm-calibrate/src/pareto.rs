@@ -37,7 +37,8 @@ impl ParetoFront {
         }
 
         // Remove all solutions dominated by the new solution
-        self.solutions.retain(|existing| !dominates(&solution.fitness, &existing.fitness));
+        self.solutions
+            .retain(|existing| !dominates(&solution.fitness, &existing.fitness));
 
         // Add the new solution
         self.solutions.push(solution);
@@ -52,7 +53,9 @@ impl ParetoFront {
 
     /// Check if a fitness vector is dominated by any solution in the front
     pub fn is_dominated(&self, fitness: &FitnessMetrics) -> bool {
-        self.solutions.iter().any(|sol| dominates(&sol.fitness, fitness))
+        self.solutions
+            .iter()
+            .any(|sol| dominates(&sol.fitness, fitness))
     }
 
     /// Get all non-dominated solutions
@@ -62,24 +65,30 @@ impl ParetoFront {
 
     /// Get the best solution according to a specific criterion
     pub fn get_best_by_objective(&self) -> Option<&ParetoSolution> {
-        self.solutions.iter()
-            .min_by(|a, b| a.objective_value.partial_cmp(&b.objective_value).unwrap_or(Ordering::Equal))
+        self.solutions.iter().min_by(|a, b| {
+            a.objective_value
+                .partial_cmp(&b.objective_value)
+                .unwrap_or(Ordering::Equal)
+        })
     }
 
     /// Get solution with highest memory gain
     pub fn get_best_memory_gain(&self) -> Option<&ParetoSolution> {
-        self.solutions.iter()
-            .max_by(|a, b| a.fitness.memory_gain.partial_cmp(&b.fitness.memory_gain).unwrap_or(Ordering::Equal))
+        self.solutions.iter().max_by(|a, b| {
+            a.fitness
+                .memory_gain
+                .partial_cmp(&b.fitness.memory_gain)
+                .unwrap_or(Ordering::Equal)
+        })
     }
 
     /// Get solution with lowest quality degradation
     pub fn get_best_quality(&self) -> Option<&ParetoSolution> {
-        self.solutions.iter()
-            .min_by(|a, b| {
-                let quality_a = a.fitness.delta_brier_lm + a.fitness.cosine_penalty;
-                let quality_b = b.fitness.delta_brier_lm + b.fitness.cosine_penalty;
-                quality_a.partial_cmp(&quality_b).unwrap_or(Ordering::Equal)
-            })
+        self.solutions.iter().min_by(|a, b| {
+            let quality_a = a.fitness.delta_brier_lm + a.fitness.cosine_penalty;
+            let quality_b = b.fitness.delta_brier_lm + b.fitness.cosine_penalty;
+            quality_a.partial_cmp(&quality_b).unwrap_or(Ordering::Equal)
+        })
     }
 
     /// Get number of solutions in the front
@@ -111,7 +120,8 @@ impl ParetoFront {
         indexed_distances.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(Ordering::Equal));
 
         // Keep solutions with highest crowding distances
-        let keep_indices: Vec<usize> = indexed_distances.iter()
+        let keep_indices: Vec<usize> = indexed_distances
+            .iter()
             .take(target_size)
             .map(|(idx, _)| *idx)
             .collect();
@@ -139,7 +149,8 @@ impl ParetoFront {
         }
 
         // For each objective dimension
-        for obj_idx in 0..4 { // 4 objectives: memory_gain, delta_brier_lm, cosine_penalty, latency_penalty
+        for obj_idx in 0..4 {
+            // 4 objectives: memory_gain, delta_brier_lm, cosine_penalty, latency_penalty
             // Create sorted indices for this objective
             let mut indices: Vec<usize> = (0..n).collect();
             indices.sort_by(|&a, &b| {
@@ -154,14 +165,17 @@ impl ParetoFront {
 
             // Calculate range for normalization
             let obj_min = self.get_objective_value(&self.solutions[indices[0]].fitness, obj_idx);
-            let obj_max = self.get_objective_value(&self.solutions[indices[n - 1]].fitness, obj_idx);
+            let obj_max =
+                self.get_objective_value(&self.solutions[indices[n - 1]].fitness, obj_idx);
             let range = obj_max - obj_min;
 
             if range > 0.0 {
                 // Add crowding distance for intermediate points
                 for i in 1..n - 1 {
-                    let prev_val = self.get_objective_value(&self.solutions[indices[i - 1]].fitness, obj_idx);
-                    let next_val = self.get_objective_value(&self.solutions[indices[i + 1]].fitness, obj_idx);
+                    let prev_val =
+                        self.get_objective_value(&self.solutions[indices[i - 1]].fitness, obj_idx);
+                    let next_val =
+                        self.get_objective_value(&self.solutions[indices[i + 1]].fitness, obj_idx);
                     distances[indices[i]] += (next_val - prev_val) / range;
                 }
             }
@@ -185,17 +199,15 @@ impl ParetoFront {
 /// Check if fitness vector `a` dominates fitness vector `b`
 /// For our problem: maximize memory_gain, minimize everything else
 pub fn dominates(a: &FitnessMetrics, b: &FitnessMetrics) -> bool {
-    let better_or_equal =
-        a.memory_gain >= b.memory_gain &&
-        a.delta_brier_lm <= b.delta_brier_lm &&
-        a.cosine_penalty <= b.cosine_penalty &&
-        a.latency_penalty <= b.latency_penalty;
+    let better_or_equal = a.memory_gain >= b.memory_gain
+        && a.delta_brier_lm <= b.delta_brier_lm
+        && a.cosine_penalty <= b.cosine_penalty
+        && a.latency_penalty <= b.latency_penalty;
 
-    let strictly_better =
-        a.memory_gain > b.memory_gain ||
-        a.delta_brier_lm < b.delta_brier_lm ||
-        a.cosine_penalty < b.cosine_penalty ||
-        a.latency_penalty < b.latency_penalty;
+    let strictly_better = a.memory_gain > b.memory_gain
+        || a.delta_brier_lm < b.delta_brier_lm
+        || a.cosine_penalty < b.cosine_penalty
+        || a.latency_penalty < b.latency_penalty;
 
     better_or_equal && strictly_better
 }
@@ -253,13 +265,18 @@ mod tests {
     use super::*;
     use crate::{ContinuousParams, QuantProfile};
 
-    fn create_test_solution(memory_gain: f64, delta_brier: f64, cosine_penalty: f64, latency_penalty: f64) -> ParetoSolution {
+    fn create_test_solution(
+        memory_gain: f64,
+        delta_brier: f64,
+        cosine_penalty: f64,
+        latency_penalty: f64,
+    ) -> ParetoSolution {
         ParetoSolution {
             profile: QuantProfile {
                 bit_width: 4,
                 qjl_dim: 32,
                 rotation_seed: 42,
-                continuous: ContinuousParams::default(),
+                qjl_threshold: 0.0001, scale_mode: "per_token".to_string(), clipping_percentile: 0.95, scale_multiplier: 1.0,
             },
             fitness: FitnessMetrics {
                 memory_gain,
@@ -281,9 +298,9 @@ mod tests {
         };
 
         let b = FitnessMetrics {
-            memory_gain: 1.8, // worse
-            delta_brier_lm: 0.12, // worse
-            cosine_penalty: 0.05, // equal
+            memory_gain: 1.8,      // worse
+            delta_brier_lm: 0.12,  // worse
+            cosine_penalty: 0.05,  // equal
             latency_penalty: 0.02, // equal
         };
 

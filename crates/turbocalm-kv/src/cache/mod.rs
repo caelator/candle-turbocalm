@@ -1,11 +1,11 @@
 pub mod dense;
 
-use candle_core::{DType, Device, Result, Tensor};
 use crate::quant::pack::{pack_bits, unpack_bits};
-use crate::quant::profile::QuantProfile;
 use crate::quant::polar::PolarQuantizer;
 use crate::quant::qjl::QjlProjector;
 use crate::quant::rotation::generate_orthogonal_matrix;
+use candle_core::{DType, Device, Result, Tensor};
+use turbocalm_core::QuantProfile;
 
 pub trait KvCache {
     fn append(&mut self, key: &Tensor, value: &Tensor) -> Result<()>;
@@ -48,7 +48,7 @@ pub struct TurboKvCache {
 impl TurboKvCache {
     pub fn new(profile: QuantProfile) -> Self {
         let polar_quantizer = PolarQuantizer::new(profile.bit_width);
-        Self { 
+        Self {
             profile,
             polar_quantizer,
             keys: Vec::new(),
@@ -70,7 +70,7 @@ impl TurboKvCache {
                 dim,
                 self.profile.rotation_seed,
                 self.profile.qjl_threshold,
-                device
+                device,
             )?;
             self.qjl_projector = Some(proj);
         }
@@ -89,7 +89,11 @@ impl TurboKvCache {
         Ok((reshaped, shape))
     }
 
-    fn unflatten_after_matmul(tensor: &Tensor, original_shape: &[usize], new_last_dim: usize) -> Result<Tensor> {
+    fn unflatten_after_matmul(
+        tensor: &Tensor,
+        original_shape: &[usize],
+        new_last_dim: usize,
+    ) -> Result<Tensor> {
         let mut new_shape = original_shape.to_vec();
         let len = new_shape.len();
         new_shape[len - 1] = new_last_dim;
@@ -98,7 +102,9 @@ impl TurboKvCache {
 
     fn compress_tensor(&mut self, tensor: &Tensor) -> Result<CompressedTensor> {
         let dims = tensor.dims();
-        let dim = *dims.last().ok_or_else(|| candle_core::Error::Msg("Empty tensor".to_string()))?;
+        let dim = *dims
+            .last()
+            .ok_or_else(|| candle_core::Error::Msg("Empty tensor".to_string()))?;
         self.init_if_needed(dim, tensor.device())?;
 
         let rot = self.rotation_matrix.as_ref().unwrap();
@@ -113,13 +119,13 @@ impl TurboKvCache {
         // Polar quantization
         let (quantized_flat, q_scale_flat) = self.polar_quantizer.quantize(&rotated)?;
         let quantized_shape = quantized_flat.dims().to_vec();
-        let packed_quantized = pack_bits(
-            &quantized_flat.to_dtype(DType::U8)?,
-            self.profile.bit_width,
-        )?;
+        let packed_quantized =
+            pack_bits(&quantized_flat.to_dtype(DType::U8)?, self.profile.bit_width)?;
 
         // Compute residual
-        let dequantized_flat = self.polar_quantizer.dequantize(&quantized_flat, &q_scale_flat)?;
+        let dequantized_flat = self
+            .polar_quantizer
+            .dequantize(&quantized_flat, &q_scale_flat)?;
         let residual_flat = rotated.broadcast_sub(&dequantized_flat)?;
 
         // QJL projection
@@ -160,18 +166,6 @@ impl TurboKvCache {
         // Unflatten
         let dim = comp.original_shape.last().unwrap();
         Self::unflatten_after_matmul(&reconstructed_flat, &comp.original_shape, *dim)
-    }
-
-    fn decompress_tensor(&self, comp: &CompressedTensor) -> Result<Tensor> {
-        let rot = self.rotation_matrix.as_ref().ok_or_else(|| candle_core::Error::Msg("Uninitialized".to_string()))?;
-        let qjl = self.qjl_projector.as_ref().ok_or_else(|| candle_core::Error::Msg("Uninitialized".to_string()))?;
-        Self::decompress_tensor_with(
-            &self.polar_quantizer,
-            self.profile.bit_width,
-            rot,
-            qjl,
-            comp,
-        )
     }
 
     fn cat_dim(rank: usize) -> Result<usize> {
@@ -246,8 +240,14 @@ impl KvCache for TurboKvCache {
     }
 
     fn get_key(&mut self) -> Result<Tensor> {
-        let rot = self.rotation_matrix.as_ref().ok_or_else(|| candle_core::Error::Msg("Uninitialized".to_string()))?;
-        let qjl = self.qjl_projector.as_ref().ok_or_else(|| candle_core::Error::Msg("Uninitialized".to_string()))?;
+        let rot = self
+            .rotation_matrix
+            .as_ref()
+            .ok_or_else(|| candle_core::Error::Msg("Uninitialized".to_string()))?;
+        let qjl = self
+            .qjl_projector
+            .as_ref()
+            .ok_or_else(|| candle_core::Error::Msg("Uninitialized".to_string()))?;
         Self::update_uncompressed_cache(
             &self.polar_quantizer,
             self.profile.bit_width,
@@ -259,8 +259,14 @@ impl KvCache for TurboKvCache {
     }
 
     fn get_value(&mut self) -> Result<Tensor> {
-        let rot = self.rotation_matrix.as_ref().ok_or_else(|| candle_core::Error::Msg("Uninitialized".to_string()))?;
-        let qjl = self.qjl_projector.as_ref().ok_or_else(|| candle_core::Error::Msg("Uninitialized".to_string()))?;
+        let rot = self
+            .rotation_matrix
+            .as_ref()
+            .ok_or_else(|| candle_core::Error::Msg("Uninitialized".to_string()))?;
+        let qjl = self
+            .qjl_projector
+            .as_ref()
+            .ok_or_else(|| candle_core::Error::Msg("Uninitialized".to_string()))?;
         Self::update_uncompressed_cache(
             &self.polar_quantizer,
             self.profile.bit_width,
@@ -281,8 +287,8 @@ impl KvCache for TurboKvCache {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use candle_core::Device;
     use crate::cache::dense::DenseKvCache;
+    use candle_core::Device;
 
     fn generate_random_tensor(shape: &[usize], device: &Device) -> Result<Tensor> {
         let num_elements: usize = shape.iter().product();
@@ -302,6 +308,8 @@ mod tests {
             qjl_dim: 8,
             qjl_threshold: 0.0,
             scale_mode: "per_token".to_string(),
+            clipping_percentile: 0.99,
+            scale_multiplier: 1.0,
         };
 
         let mut turbo_cache = TurboKvCache::new(profile.clone());
@@ -325,15 +333,77 @@ mod tests {
 
         // Memory usage check (elements count approximation)
         let dense_bytes = key.elem_count() * 4;
-        
-        let c_key = &turbo_cache.keys[0];
-        let turbo_conceptual_bytes = 
-            (c_key.quantized.elem_count() * profile.bit_width as usize / 8) + 
-            (c_key.q_scale.elem_count() * 4) +
-            (c_key.signs.elem_count() * 1) + 
-            (c_key.r_scale.elem_count() * 4);
 
-        assert!(turbo_conceptual_bytes < dense_bytes, "TurboCache conceptual bytes ({}) should be less than dense bytes ({})", turbo_conceptual_bytes, dense_bytes);
+        let c_key = &turbo_cache.keys[0];
+        let turbo_conceptual_bytes = c_key.quantized.elem_count()
+            + (c_key.q_scale.elem_count() * 4)
+            + (c_key.signs.elem_count() * 1)
+            + (c_key.r_scale.elem_count() * 4);
+
+        assert!(
+            turbo_conceptual_bytes < dense_bytes,
+            "TurboCache conceptual bytes ({}) should be less than dense bytes ({})",
+            turbo_conceptual_bytes,
+            dense_bytes
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_turbo_kv_cache_packs_quantized_values() -> Result<()> {
+        let device = Device::Cpu;
+        let profile = QuantProfile {
+            bit_width: 4,
+            rotation_seed: 42,
+            qjl_dim: 8,
+            qjl_threshold: 0.0,
+            scale_mode: "per_token".to_string(),
+            clipping_percentile: 0.99,
+            scale_multiplier: 1.0,
+        };
+
+        let mut turbo_cache = TurboKvCache::new(profile);
+        let shape = vec![1, 2, 3, 8];
+        let key = generate_random_tensor(&shape, &device)?;
+        let value = generate_random_tensor(&shape, &device)?;
+
+        turbo_cache.append(&key, &value)?;
+
+        let compressed = &turbo_cache.keys[0];
+        let unpacked_len = compressed.quantized_shape.iter().product::<usize>();
+        assert_eq!(compressed.quantized.elem_count(), (unpacked_len + 1) / 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_turbo_kv_cache_reuses_incremental_uncompressed_prefix() -> Result<()> {
+        let device = Device::Cpu;
+        let mut turbo_cache = TurboKvCache::new(QuantProfile::default());
+
+        let first = generate_random_tensor(&[1, 2, 1, 8], &device)?;
+        turbo_cache.append(&first, &first)?;
+        let first_key = turbo_cache.get_key()?;
+        assert_eq!(first_key.dims(), &[1, 2, 1, 8]);
+        assert_eq!(turbo_cache.uncompressed_cache.key.decompressed_entries, 1);
+
+        let cached_after_first = turbo_cache
+            .uncompressed_cache
+            .key
+            .concatenated
+            .as_ref()
+            .expect("expected incremental key cache after first retrieval")
+            .clone();
+        let repeated_key = turbo_cache.get_key()?;
+        assert_eq!(repeated_key.dims(), cached_after_first.dims());
+        assert_eq!(turbo_cache.uncompressed_cache.key.decompressed_entries, 1);
+
+        let second = generate_random_tensor(&[1, 2, 1, 8], &device)?;
+        turbo_cache.append(&second, &second)?;
+        let second_key = turbo_cache.get_key()?;
+        assert_eq!(second_key.dims(), &[1, 2, 2, 8]);
+        assert_eq!(turbo_cache.uncompressed_cache.key.decompressed_entries, 2);
 
         Ok(())
     }

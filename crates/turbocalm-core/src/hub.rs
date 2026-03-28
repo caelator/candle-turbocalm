@@ -61,10 +61,7 @@ impl HubClient {
         info!("Downloading safetensors files from {}", model_id);
 
         // Common safetensors file patterns
-        let common_patterns = [
-            "model.safetensors",
-            "pytorch_model.safetensors",
-        ];
+        let common_patterns = ["model.safetensors", "pytorch_model.safetensors"];
 
         let repo = self.api.model(model_id.to_string());
         let mut downloaded_files = Vec::new();
@@ -88,9 +85,13 @@ impl HubClient {
             Ok(index_path) => {
                 debug!("Found safetensors index file, parsing shard list");
                 if let Ok(index_content) = std::fs::read_to_string(&index_path) {
-                    if let Ok(index_json) = serde_json::from_str::<serde_json::Value>(&index_content) {
+                    if let Ok(index_json) =
+                        serde_json::from_str::<serde_json::Value>(&index_content)
+                    {
                         // Extract unique shard filenames from weight_map
-                        if let Some(weight_map) = index_json.get("weight_map").and_then(|v| v.as_object()) {
+                        if let Some(weight_map) =
+                            index_json.get("weight_map").and_then(|v| v.as_object())
+                        {
                             let mut shard_files: Vec<String> = weight_map
                                 .values()
                                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
@@ -119,9 +120,10 @@ impl HubClient {
         }
 
         if downloaded_files.is_empty() {
-            return Err(TurboCALMError::Hub(HubError::DownloadFailed(
-                format!("No safetensors files found in {}", model_id),
-            )));
+            return Err(TurboCALMError::Hub(HubError::DownloadFailed(format!(
+                "No safetensors files found in {}",
+                model_id
+            ))));
         }
 
         Ok(downloaded_files)
@@ -188,9 +190,10 @@ impl HubClient {
         }
 
         if files.is_empty() {
-            return Err(TurboCALMError::Hub(HubError::DownloadFailed(
-                format!("No tokenizer files found in {}", model_id),
-            )));
+            return Err(TurboCALMError::Hub(HubError::DownloadFailed(format!(
+                "No tokenizer files found in {}",
+                model_id
+            ))));
         }
 
         Ok(files)
@@ -254,8 +257,10 @@ impl DownloadManifest {
 
     /// Add a downloaded file to the manifest
     pub fn add_file(&mut self, filename: &str, local_path: &Path) {
-        self.files
-            .insert(filename.to_string(), local_path.to_string_lossy().to_string());
+        self.files.insert(
+            filename.to_string(),
+            local_path.to_string_lossy().to_string(),
+        );
     }
 
     /// Save manifest to a JSON file
@@ -398,7 +403,10 @@ mod tests {
         let result = HubClient::new();
         match result {
             Ok(_) => println!("HubClient created successfully"),
-            Err(e) => println!("HubClient creation failed (expected in some environments): {}", e),
+            Err(e) => println!(
+                "HubClient creation failed (expected in some environments): {}",
+                e
+            ),
         }
     }
 
@@ -410,7 +418,10 @@ mod tests {
         config_files.insert("config.json".to_string(), PathBuf::from("/tmp/config.json"));
 
         let mut tokenizer_files = HashMap::new();
-        tokenizer_files.insert("tokenizer.json".to_string(), PathBuf::from("/tmp/tokenizer.json"));
+        tokenizer_files.insert(
+            "tokenizer.json".to_string(),
+            PathBuf::from("/tmp/tokenizer.json"),
+        );
 
         let download = CompleteModelDownload {
             model_id: "test/model".to_string(),

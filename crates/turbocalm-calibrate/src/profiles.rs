@@ -3,11 +3,11 @@
 //! Handles serialization of calibration results to safetensors format
 //! for integration with the turbocalm quantization pipeline.
 
-use crate::{FitnessMetrics, QuantProfile, ContinuousParams};
 use crate::pareto::ParetoSolution;
 use crate::search::SearchResults;
+use crate::{ContinuousParams, FitnessMetrics, QuantProfile};
 use anyhow::{Context, Result};
-use safetensors::{SafeTensors, SafeTensorError};
+use safetensors::{SafeTensorError, SafeTensors};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::File;
@@ -88,9 +88,7 @@ impl ProfileExporter {
         std::fs::create_dir_all(&dir)
             .with_context(|| format!("Failed to create output directory: {:?}", dir))?;
 
-        Ok(Self {
-            output_dir: dir,
-        })
+        Ok(Self { output_dir: dir })
     }
 
     /// Export search results to safetensors format
@@ -115,15 +113,20 @@ impl ProfileExporter {
         self.save_as_json(&collection, &json_path)?;
 
         // Save to safetensors (efficient binary)
-        let safetensors_path = self.output_dir.join(format!("profiles_{}.safetensors", timestamp));
+        let safetensors_path = self
+            .output_dir
+            .join(format!("profiles_{}.safetensors", timestamp));
         self.save_as_safetensors(&collection, &safetensors_path)?;
 
         // Save individual best profile for easy access
         let best_profile_path = self.output_dir.join("best_profile.json");
         self.save_best_profile(&collection.best_profile, &best_profile_path)?;
 
-        tracing::info!("Exported {} profiles to {:?}",
-                       collection.profiles.len(), safetensors_path);
+        tracing::info!(
+            "Exported {} profiles to {:?}",
+            collection.profiles.len(),
+            safetensors_path
+        );
 
         Ok(safetensors_path)
     }
@@ -189,11 +192,7 @@ impl ProfileExporter {
     }
 
     /// Save collection as JSON
-    fn save_as_json<P: AsRef<Path>>(
-        &self,
-        collection: &ProfileCollection,
-        path: P,
-    ) -> Result<()> {
+    fn save_as_json<P: AsRef<Path>>(&self, collection: &ProfileCollection, path: P) -> Result<()> {
         let json = serde_json::to_string_pretty(collection)
             .context("Failed to serialize profiles to JSON")?;
 
@@ -240,13 +239,9 @@ impl ProfileExporter {
     }
 
     /// Save best profile separately
-    fn save_best_profile<P: AsRef<Path>>(
-        &self,
-        profile: &ProfileEntry,
-        path: P,
-    ) -> Result<()> {
-        let json = serde_json::to_string_pretty(profile)
-            .context("Failed to serialize best profile")?;
+    fn save_best_profile<P: AsRef<Path>>(&self, profile: &ProfileEntry, path: P) -> Result<()> {
+        let json =
+            serde_json::to_string_pretty(profile).context("Failed to serialize best profile")?;
 
         let mut file = File::create(&path)
             .with_context(|| format!("Failed to create best profile file: {:?}", path.as_ref()))?;
@@ -266,8 +261,8 @@ impl ProfileExporter {
         file.read_to_string(&mut contents)
             .with_context(|| format!("Failed to read file: {:?}", path.as_ref()))?;
 
-        let collection: ProfileCollection = serde_json::from_str(&contents)
-            .context("Failed to deserialize JSON")?;
+        let collection: ProfileCollection =
+            serde_json::from_str(&contents).context("Failed to deserialize JSON")?;
 
         Ok(collection)
     }
@@ -276,8 +271,8 @@ impl ProfileExporter {
     fn load_from_safetensors<P: AsRef<Path>>(path: P) -> Result<ProfileCollection> {
         let data = std::fs::read(&path)
             .with_context(|| format!("Failed to read safetensors file: {:?}", path.as_ref()))?;
-        let collection: ProfileCollection = serde_json::from_slice(&data)
-            .context("Failed to deserialize safetensors data")?;
+        let collection: ProfileCollection =
+            serde_json::from_slice(&data).context("Failed to deserialize safetensors data")?;
         Ok(collection)
     }
 }
@@ -289,9 +284,9 @@ fn generate_profile_id(profile: &QuantProfile) -> String {
         profile.bit_width,
         profile.qjl_dim,
         profile.rotation_seed,
-        profile.continuous.clipping_percentile,
-        profile.continuous.scale_multiplier,
-        profile.continuous.qjl_threshold * 1e6 // Scale for readability
+        profile.clipping_percentile,
+        profile.scale_multiplier,
+        profile.qjl_threshold as f64 * 1e6 // Scale for readability
     )
 }
 
@@ -306,19 +301,27 @@ impl ProfileAnalyzer {
         // Memory gain statistics
         let memory_gains: Vec<f64> = profiles.iter().map(|p| p.fitness.memory_gain).collect();
         let avg_memory_gain = memory_gains.iter().sum::<f64>() / memory_gains.len() as f64;
-        let max_memory_gain = memory_gains.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));
+        let max_memory_gain = memory_gains
+            .iter()
+            .fold(f64::NEG_INFINITY, |a, &b| a.max(b));
 
         // Quality degradation statistics
-        let quality_degradations: Vec<f64> = profiles.iter()
+        let quality_degradations: Vec<f64> = profiles
+            .iter()
             .map(|p| p.fitness.delta_brier_lm + p.fitness.cosine_penalty)
             .collect();
-        let avg_quality_degradation = quality_degradations.iter().sum::<f64>() / quality_degradations.len() as f64;
-        let min_quality_degradation = quality_degradations.iter().fold(f64::INFINITY, |a, &b| a.min(b));
+        let avg_quality_degradation =
+            quality_degradations.iter().sum::<f64>() / quality_degradations.len() as f64;
+        let min_quality_degradation = quality_degradations
+            .iter()
+            .fold(f64::INFINITY, |a, &b| a.min(b));
 
         // Bit width distribution
         let mut bit_width_counts = HashMap::new();
         for profile in profiles {
-            *bit_width_counts.entry(profile.profile.bit_width).or_insert(0) += 1;
+            *bit_width_counts
+                .entry(profile.profile.bit_width)
+                .or_insert(0) += 1;
         }
 
         // QJL dimension distribution
@@ -345,7 +348,9 @@ impl ProfileAnalyzer {
         max_quality_degradation: Option<f64>,
         preferred_bit_width: Option<u8>,
     ) -> Vec<&ProfileEntry> {
-        collection.profiles.iter()
+        collection
+            .profiles
+            .iter()
             .filter(|profile| {
                 if let Some(min_gain) = min_memory_gain {
                     if profile.fitness.memory_gain < min_gain {
@@ -354,7 +359,8 @@ impl ProfileAnalyzer {
                 }
 
                 if let Some(max_degradation) = max_quality_degradation {
-                    let total_degradation = profile.fitness.delta_brier_lm + profile.fitness.cosine_penalty;
+                    let total_degradation =
+                        profile.fitness.delta_brier_lm + profile.fitness.cosine_penalty;
                     if total_degradation > max_degradation {
                         return false;
                     }
@@ -387,8 +393,8 @@ pub struct ProfileAnalysis {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use crate::search::{SearchResults, SearchStatistics};
+    use tempfile::TempDir;
 
     fn create_test_results() -> SearchResults {
         let solution = crate::pareto::ParetoSolution {
@@ -396,7 +402,7 @@ mod tests {
                 bit_width: 4,
                 qjl_dim: 32,
                 rotation_seed: 42,
-                continuous: ContinuousParams::default(),
+                qjl_threshold: 0.0001, scale_mode: "per_token".to_string(), clipping_percentile: 0.95, scale_multiplier: 1.0,
             },
             fitness: FitnessMetrics {
                 memory_gain: 0.6,
@@ -433,11 +439,8 @@ mod tests {
         };
 
         // Export profiles
-        let export_path = exporter.export_results(
-            &results,
-            dataset_info,
-            "test_config".to_string(),
-        )?;
+        let export_path =
+            exporter.export_results(&results, dataset_info, "test_config".to_string())?;
 
         // Import profiles
         let imported = ProfileExporter::import_profiles(&export_path)?;
@@ -459,11 +462,10 @@ mod tests {
                 bit_width: 3,
                 qjl_dim: 64,
                 rotation_seed: 137,
-                continuous: ContinuousParams {
-                    clipping_percentile: 0.99,
-                    scale_multiplier: 1.5,
-                    qjl_threshold: 1e-5,
-                },
+                qjl_threshold: 1e-5 as f32,
+                scale_mode: "per_token".to_string(),
+                clipping_percentile: 0.99,
+                scale_multiplier: 1.5,
             },
             fitness: FitnessMetrics {
                 memory_gain: 0.7,

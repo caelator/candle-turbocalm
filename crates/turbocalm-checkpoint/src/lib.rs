@@ -11,11 +11,9 @@ pub mod parser;
 pub mod remapping;
 pub mod verification;
 
-pub use convert::{ConvertArgs, ConvertCommand, ConvertHandler, run_convert_command};
+pub use convert::{run_convert_command, ConvertArgs, ConvertCommand, ConvertHandler};
 pub use download::{CALMCheckpoint, CheckpointDownloader, KnownCALMModels};
 pub use manifest::{CALMModelManifest, ManifestManager, ModelSummary};
 pub use parser::{StateDictParser, TensorSummary};
-pub use remapping::{
-    RemappingPresets, RemappingUtils, TensorNameRemapper, TensorPatternAnalysis,
-};
+pub use remapping::{RemappingPresets, RemappingUtils, TensorNameRemapper, TensorPatternAnalysis};
 pub use verification::{ShapeVerifier, VerificationReport, VerificationStatus};
