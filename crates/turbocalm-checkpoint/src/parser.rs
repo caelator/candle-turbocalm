@@ -144,30 +144,30 @@ impl StateDictParser {
         let tensor = match candle_dtype {
             DType::F32 => {
                 let float_data = self.bytes_to_f32_slice(data)?;
-                Tensor::from_slice(float_data, shape, &self.device)?
+                Tensor::from_slice(&float_data, shape, &self.device)?
             }
             DType::F16 => {
                 let half_data = self.bytes_to_f16_slice(data)?;
-                Tensor::from_slice(half_data, shape, &self.device)?
+                Tensor::from_slice(&half_data, shape, &self.device)?
             }
             DType::BF16 => {
                 let bf16_data = self.bytes_to_bf16_slice(data)?;
-                Tensor::from_slice(bf16_data, shape, &self.device)?
+                Tensor::from_slice(&bf16_data, shape, &self.device)?
             }
             DType::I64 => {
                 let int_data = self.bytes_to_i64_slice(data)?;
-                Tensor::from_slice(int_data, shape, &self.device)?
+                Tensor::from_slice(&int_data, shape, &self.device)?
             }
             DType::U32 => {
                 let uint_data = self.bytes_to_u32_slice(data)?;
-                Tensor::from_slice(uint_data, shape, &self.device)?
+                Tensor::from_slice(&uint_data, shape, &self.device)?
             }
             DType::U8 => {
                 Tensor::from_slice(data, shape, &self.device)?
             }
             DType::F64 => {
                 let double_data = self.bytes_to_f64_slice(data)?;
-                Tensor::from_slice(double_data, shape, &self.device)?
+                Tensor::from_slice(&double_data, shape, &self.device)?
             }
         };
 
@@ -190,81 +190,87 @@ impl StateDictParser {
     }
 
     /// Convert bytes to f32 slice
-    fn bytes_to_f32_slice(&self, bytes: &[u8]) -> Result<&[f32]> {
+    fn bytes_to_f32_slice(&self, bytes: &[u8]) -> Result<Vec<f32>> {
         if bytes.len() % 4 != 0 {
             return Err(anyhow::anyhow!("Invalid byte length for f32 data"));
         }
-        Ok(unsafe {
-            std::slice::from_raw_parts(
-                bytes.as_ptr() as *const f32,
-                bytes.len() / 4,
-            )
-        })
+
+        let mut result = Vec::with_capacity(bytes.len() / 4);
+        for chunk in bytes.chunks_exact(4) {
+            let array = [chunk[0], chunk[1], chunk[2], chunk[3]];
+            result.push(f32::from_le_bytes(array));
+        }
+        Ok(result)
     }
 
     /// Convert bytes to f16 slice
-    fn bytes_to_f16_slice(&self, bytes: &[u8]) -> Result<&[half::f16]> {
+    fn bytes_to_f16_slice(&self, bytes: &[u8]) -> Result<Vec<half::f16>> {
         if bytes.len() % 2 != 0 {
             return Err(anyhow::anyhow!("Invalid byte length for f16 data"));
         }
-        Ok(unsafe {
-            std::slice::from_raw_parts(
-                bytes.as_ptr() as *const half::f16,
-                bytes.len() / 2,
-            )
-        })
+
+        let mut result = Vec::with_capacity(bytes.len() / 2);
+        for chunk in bytes.chunks_exact(2) {
+            let array = [chunk[0], chunk[1]];
+            result.push(half::f16::from_le_bytes(array));
+        }
+        Ok(result)
     }
 
     /// Convert bytes to bf16 slice
-    fn bytes_to_bf16_slice(&self, bytes: &[u8]) -> Result<&[half::bf16]> {
+    fn bytes_to_bf16_slice(&self, bytes: &[u8]) -> Result<Vec<half::bf16>> {
         if bytes.len() % 2 != 0 {
             return Err(anyhow::anyhow!("Invalid byte length for bf16 data"));
         }
-        Ok(unsafe {
-            std::slice::from_raw_parts(
-                bytes.as_ptr() as *const half::bf16,
-                bytes.len() / 2,
-            )
-        })
+
+        let mut result = Vec::with_capacity(bytes.len() / 2);
+        for chunk in bytes.chunks_exact(2) {
+            let array = [chunk[0], chunk[1]];
+            result.push(half::bf16::from_le_bytes(array));
+        }
+        Ok(result)
     }
 
     /// Convert bytes to i64 slice
-    fn bytes_to_i64_slice(&self, bytes: &[u8]) -> Result<&[i64]> {
+    fn bytes_to_i64_slice(&self, bytes: &[u8]) -> Result<Vec<i64>> {
         if bytes.len() % 8 != 0 {
             return Err(anyhow::anyhow!("Invalid byte length for i64 data"));
         }
-        Ok(unsafe {
-            std::slice::from_raw_parts(
-                bytes.as_ptr() as *const i64,
-                bytes.len() / 8,
-            )
-        })
+
+        let mut result = Vec::with_capacity(bytes.len() / 8);
+        for chunk in bytes.chunks_exact(8) {
+            let array = [chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7]];
+            result.push(i64::from_le_bytes(array));
+        }
+        Ok(result)
     }
 
     /// Convert bytes to u32 slice
-    fn bytes_to_u32_slice(&self, bytes: &[u8]) -> Result<&[u32]> {
+    fn bytes_to_u32_slice(&self, bytes: &[u8]) -> Result<Vec<u32>> {
         if bytes.len() % 4 != 0 {
             return Err(anyhow::anyhow!("Invalid byte length for u32 data"));
         }
-        Ok(unsafe {
-            std::slice::from_raw_parts(
-                bytes.as_ptr() as *const u32,
-                bytes.len() / 4,
-            )
-        })
+
+        let mut result = Vec::with_capacity(bytes.len() / 4);
+        for chunk in bytes.chunks_exact(4) {
+            let array = [chunk[0], chunk[1], chunk[2], chunk[3]];
+            result.push(u32::from_le_bytes(array));
+        }
+        Ok(result)
     }
 
     /// Convert bytes to f64 slice
-    fn bytes_to_f64_slice(&self, bytes: &[u8]) -> Result<&[f64]> {
+    fn bytes_to_f64_slice(&self, bytes: &[u8]) -> Result<Vec<f64>> {
         if bytes.len() % 8 != 0 {
             return Err(anyhow::anyhow!("Invalid byte length for f64 data"));
         }
-        Ok(unsafe {
-            std::slice::from_raw_parts(
-                bytes.as_ptr() as *const f64,
-                bytes.len() / 8,
-            )
-        })
+
+        let mut result = Vec::with_capacity(bytes.len() / 8);
+        for chunk in bytes.chunks_exact(8) {
+            let array = [chunk[0], chunk[1], chunk[2], chunk[3], chunk[4], chunk[5], chunk[6], chunk[7]];
+            result.push(f64::from_le_bytes(array));
+        }
+        Ok(result)
     }
 
     /// Get summary information about parsed tensors
@@ -398,8 +404,9 @@ mod tests {
 
         // Test f32 conversion
         let f32_bytes = [0u8, 0, 128, 63]; // 1.0 in IEEE 754 little-endian
-        let f32_slice = parser.bytes_to_f32_slice(&f32_bytes).unwrap();
-        assert_eq!(f32_slice.len(), 1);
+        let f32_vec = parser.bytes_to_f32_slice(&f32_bytes).unwrap();
+        assert_eq!(f32_vec.len(), 1);
+        assert_eq!(f32_vec[0], 1.0);
 
         // Test error case
         let invalid_bytes = [0u8, 0, 128]; // 3 bytes, not divisible by 4

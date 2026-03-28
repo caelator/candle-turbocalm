@@ -234,7 +234,17 @@ impl CmaEs {
         let raw_weights: Vec<f64> = (1..=mu)
             .map(|rank| (mu as f64 + 0.5).ln() - (rank as f64).ln())
             .collect();
+
+        // Verify all weights are positive (should always be true for rank 1..=mu)
+        // Since ln(mu+0.5) > ln(mu) >= ln(rank) for all rank in 1..=mu
+        debug_assert!(
+            raw_weights.iter().all(|&w| w > 0.0),
+            "All recombination weights should be positive for ranks 1..=mu. mu={}, weights={:?}",
+            mu, raw_weights
+        );
+
         let sum_weights = raw_weights.iter().sum::<f64>();
+        debug_assert!(sum_weights > 0.0, "Sum of weights should be positive");
 
         raw_weights
             .into_iter()
@@ -261,15 +271,31 @@ impl CmaEs {
     }
 
     fn covariance_sqrt(&self) -> Vec<Vec<f64>> {
-        // Simplified: return Cholesky decomposition approximation
-        // For full implementation, would use proper matrix decomposition
-        let mut result = self.covariance.clone();
+        // Proper Cholesky decomposition for 3x3 covariance matrix
+        // Given positive-definite symmetric matrix C, compute L such that C = L * L^T
+        let mut l = vec![vec![0.0; self.dimension]; self.dimension];
+
         for i in 0..self.dimension {
-            for j in 0..self.dimension {
-                result[i][j] = if i == j { result[i][j].sqrt() } else { result[i][j] * 0.5 };
+            for j in 0..=i {
+                if i == j {
+                    // Diagonal element: L[i][i] = sqrt(C[i][i] - sum(L[i][k]^2 for k < i))
+                    let mut sum = 0.0;
+                    for k in 0..j {
+                        sum += l[i][k] * l[i][k];
+                    }
+                    l[i][j] = (self.covariance[i][i] - sum).sqrt();
+                } else {
+                    // Off-diagonal element: L[i][j] = (C[i][j] - sum(L[i][k] * L[j][k] for k < j)) / L[j][j]
+                    let mut sum = 0.0;
+                    for k in 0..j {
+                        sum += l[i][k] * l[j][k];
+                    }
+                    l[i][j] = (self.covariance[i][j] - sum) / l[j][j];
+                }
             }
         }
-        result
+
+        l
     }
 }
 
