@@ -3113,7 +3113,10 @@ dependencies = [
  "anyhow",
  "candle-core",
  "candle-nn",
+ "chrono",
  "clap",
+ "half",
+ "safetensors 0.5.3",
  "serde_json",
  "tokenizers",
  "tracing",
@@ -3178,8 +3181,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "candle-core",
+ "candle-nn",
  "serde",
  "serde_json",
+ "turbocalm-checkpoint",
+ "turbocalm-core",
  "turbocalm-models",
 ]
 
