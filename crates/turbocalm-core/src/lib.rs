@@ -17,7 +17,7 @@ pub use device::{
 pub use error::{Result, TurboCALMError};
 pub use hub::{CompleteModelDownload, DownloadManifest, DownloadUtils, HubClient};
 pub use metrics::{
-    MemoryReporter, MemoryUsage, MetricsBundle, MetricsTracker, SimilarityMetrics,
+    MemoryReporter, MemorySource, MemoryUsage, MetricsBundle, MetricsTracker, SimilarityMetrics,
     TensorMemoryInfo,
 };
 pub use tokenizer::{SpecialTokens, TokenizerLoader, TokenizerType, TokenizerUtils};

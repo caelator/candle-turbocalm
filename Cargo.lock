@@ -3132,6 +3132,7 @@ dependencies = [
  "chrono",
  "half",
  "hf-hub",
+ "metal 0.27.0",
  "serde",
  "serde_json",
  "tempfile",
@@ -3159,9 +3160,11 @@ dependencies = [
  "anyhow",
  "candle-core",
  "candle-nn",
+ "rand 0.8.5",
  "safetensors 0.5.3",
  "serde",
  "serde_json",
+ "turbocalm-core",
 ]
 
 [[package]]

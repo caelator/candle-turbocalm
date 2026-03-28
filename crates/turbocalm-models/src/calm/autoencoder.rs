@@ -2,7 +2,7 @@ use std::{fs, path::Path};
 
 use anyhow::{bail, Context, Result};
 use candle_core::{DType, Device, Tensor, D};
-use candle_nn::{embedding, linear, linear_no_bias, Embedding, Linear, Module, VarBuilder};
+use candle_nn::{linear, linear_no_bias, Embedding, Linear, Module, VarBuilder};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -239,9 +239,8 @@ pub struct CalmAutoencoderEncoder {
 }
 
 impl CalmAutoencoderEncoder {
-    fn load(vb: VarBuilder, config: &CalmAutoencoderConfig) -> Result<Self> {
-        let embed_tokens = embedding(config.vocab_size, config.hidden_size, vb.pp("embed_tokens"))
-            .context("failed to load encoder token embeddings")?;
+    fn load(vb: VarBuilder, config: &CalmAutoencoderConfig, embedding_weight: Tensor) -> Result<Self> {
+        let embed_tokens = Embedding::new(embedding_weight, config.hidden_size);
 
         let encoder_layers = (0..config.num_encoder_layers)
             .map(|idx| AutoencoderLayer::load(vb.pp(format!("encoder_layers.{idx}")), config))
@@ -433,10 +432,16 @@ pub struct CalmAutoencoder {
 
 impl CalmAutoencoder {
     pub fn load(vb: VarBuilder, config: CalmAutoencoderConfig) -> Result<Self> {
+        Self::load_prefixed(vb, "", config)
+    }
+
+    pub fn load_prefixed(vb: VarBuilder, prefix: &str, config: CalmAutoencoderConfig) -> Result<Self> {
         config.validate()?;
 
-        let encoder = CalmAutoencoderEncoder::load(vb.pp("encoder"), &config)?;
-        let lm_head = Linear::new(encoder.embedding_weight(), None);
+        let vb = if prefix.is_empty() { vb } else { vb.pp(prefix) };
+        let embedding_weight = Self::load_embedding_weight(&vb, &config)?;
+        let encoder = CalmAutoencoderEncoder::load(vb.pp("encoder"), &config, embedding_weight.clone())?;
+        let lm_head = Linear::new(embedding_weight, None);
         let decoder = CalmAutoencoderDecoder::load(vb.pp("decoder"), &config, lm_head)?;
 
         Ok(Self {
@@ -444,6 +449,25 @@ impl CalmAutoencoder {
             encoder,
             decoder,
         })
+    }
+
+    fn load_embedding_weight(vb: &VarBuilder, config: &CalmAutoencoderConfig) -> Result<Tensor> {
+        let shape = (config.vocab_size, config.hidden_size);
+        if vb.contains_tensor("encoder.embed_tokens.weight") {
+            vb.pp("encoder")
+                .get(shape, "embed_tokens.weight")
+                .context("failed to load encoder.embed_tokens.weight")
+        } else if vb.contains_tensor("decoder.lm_head_weight") {
+            vb.pp("decoder")
+                .get(shape, "lm_head_weight")
+                .context("failed to load decoder.lm_head_weight")
+        } else if vb.contains_tensor("decoder.lm_head.weight") {
+            vb.pp("decoder")
+                .get(shape, "lm_head.weight")
+                .context("failed to load decoder.lm_head.weight")
+        } else {
+            bail!("autoencoder checkpoint is missing shared embedding weights")
+        }
     }
 
     pub fn from_safetensors<P: AsRef<Path>>(
@@ -457,7 +481,7 @@ impl CalmAutoencoder {
             .with_context(|| format!("failed to read safetensors file {}", path.display()))?;
         let vb = VarBuilder::from_buffered_safetensors(data, dtype, device)
             .with_context(|| format!("failed to open safetensors weights {}", path.display()))?;
-        Self::load(vb, config)
+        Self::load_prefixed(vb, "", config)
     }
 
     pub fn config(&self) -> &CalmAutoencoderConfig {

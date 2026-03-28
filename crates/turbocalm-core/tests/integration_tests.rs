@@ -164,6 +164,10 @@ mod integration {
         let usage = MemoryReporter::current_memory_usage();
         assert!(usage.current_mb >= 0.0);
         assert!(usage.available_mb >= 0.0);
+        assert_eq!(
+            MemoryReporter::current_memory_usage_for_device(Some(&Device::Cpu)).source,
+            MemorySource::CpuRss
+        );
 
         // Log memory (shouldn't crash)
         MemoryReporter::log_memory_usage();

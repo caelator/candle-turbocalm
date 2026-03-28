@@ -147,13 +147,25 @@ pub struct MemoryReporter;
 impl MemoryReporter {
     /// Get current memory usage statistics
     pub fn current_memory_usage() -> MemoryUsage {
-        let current_usage = Self::get_current_memory_mb();
-        let peak_usage = Self::get_peak_memory_mb();
+        Self::current_memory_usage_for_device(None)
+    }
+
+    /// Get current memory usage statistics for a specific execution device.
+    pub fn current_memory_usage_for_device(device: Option<&Device>) -> MemoryUsage {
+        let (current_usage, source) = if device.is_some_and(Device::is_metal) {
+            match Self::get_metal_allocated_mb() {
+                Some(current_usage) => (current_usage, MemorySource::MetalAllocated),
+                None => (Self::get_current_rss_mb(), MemorySource::CpuRss),
+            }
+        } else {
+            (Self::get_current_rss_mb(), MemorySource::CpuRss)
+        };
 
         MemoryUsage {
             current_mb: current_usage,
-            peak_mb: peak_usage,
+            peak_mb: current_usage,
             available_mb: Self::get_available_memory_mb(),
+            source,
         }
     }
 
@@ -187,14 +199,14 @@ impl MemoryReporter {
     }
 
     /// Get current memory usage in MB (platform-specific implementation)
-    fn get_current_memory_mb() -> f64 {
+    fn get_current_rss_mb() -> f64 {
         #[cfg(target_os = "macos")]
         {
-            Self::get_macos_memory_usage()
+            Self::get_macos_rss_mb()
         }
         #[cfg(target_os = "linux")]
         {
-            Self::get_linux_memory_usage()
+            Self::get_linux_rss_mb()
         }
         #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         {
@@ -202,11 +214,15 @@ impl MemoryReporter {
         }
     }
 
-    /// Get peak memory usage in MB
-    fn get_peak_memory_mb() -> f64 {
-        // This is a simplified implementation
-        // In practice, you'd want to track peak usage throughout the program
-        Self::get_current_memory_mb()
+    #[cfg(target_os = "macos")]
+    fn get_metal_allocated_mb() -> Option<f64> {
+        let device = metal::Device::system_default()?;
+        Some(device.current_allocated_size() as f64 / (1024.0 * 1024.0))
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn get_metal_allocated_mb() -> Option<f64> {
+        None
     }
 
     /// Get available memory in MB
@@ -226,7 +242,7 @@ impl MemoryReporter {
     }
 
     #[cfg(target_os = "macos")]
-    fn get_macos_memory_usage() -> f64 {
+    fn get_macos_rss_mb() -> f64 {
         use std::process::Command;
 
         // Use ps to get memory usage
@@ -260,7 +276,7 @@ impl MemoryReporter {
     }
 
     #[cfg(target_os = "linux")]
-    fn get_linux_memory_usage() -> f64 {
+    fn get_linux_rss_mb() -> f64 {
         if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
             for line in status.lines() {
                 if line.starts_with("VmRSS:") {
@@ -295,8 +311,8 @@ impl MemoryReporter {
     pub fn log_memory_usage() {
         let usage = Self::current_memory_usage();
         info!(
-            "Memory: current {:.1} MB, peak {:.1} MB, available {:.1} MB",
-            usage.current_mb, usage.peak_mb, usage.available_mb
+            "Memory ({:?}): current {:.1} MB, peak {:.1} MB, available {:.1} MB",
+            usage.source, usage.current_mb, usage.peak_mb, usage.available_mb
         );
     }
 
@@ -316,6 +332,13 @@ pub struct MemoryUsage {
     pub current_mb: f64,
     pub peak_mb: f64,
     pub available_mb: f64,
+    pub source: MemorySource,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemorySource {
+    MetalAllocated,
+    CpuRss,
 }
 
 impl MemoryUsage {
@@ -511,10 +534,18 @@ mod tests {
             current_mb: 500.0,
             peak_mb: 600.0,
             available_mb: 1500.0,
+            source: MemorySource::CpuRss,
         };
 
         assert!(!usage.is_high_usage()); // 500/(500+1500) = 25% < 80%
         assert!((usage.usage_percentage() - 25.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_memory_usage_reports_cpu_rss_for_cpu_device() {
+        let usage = MemoryReporter::current_memory_usage_for_device(Some(&Device::Cpu));
+        assert_eq!(usage.source, MemorySource::CpuRss);
+        assert!(usage.current_mb >= 0.0);
     }
 
     #[test]
