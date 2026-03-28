@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use turbocalm_core::{CALMConfig, hub::convenience, auto_device, TokenizerLoader, TokenizerType, tokenizer::convenience as tokenizer_convenience, QuantProfile};
+use turbocalm_core::{CALMConfig, hub::convenience, hub::HubClient, auto_device, TokenizerLoader, TokenizerType, tokenizer::convenience as tokenizer_convenience, QuantProfile};
 use turbocalm_checkpoint::{CheckpointDownloader, StateDictParser, RemappingPresets};
 use turbocalm_models::{CalmAutoencoder, CalmAutoencoderConfig, CalmLanguageModel, CalmLmConfig, CalmGenerationModel, CalmGenerationConfig};
 use turbocalm_calibrate::{dataset::CalibrationDataset, search::SearchFactory, profiles::ProfileExporter};
@@ -347,9 +347,20 @@ fn main() -> anyhow::Result<()> {
 
             println!("💻 Using device: {:?}", device);
 
-            // Create CalmAutoencoder with VarBuilder::zeros
-            println!("🧠 Creating autoencoder with zeroed weights (demo mode)...");
-            let var_builder = VarBuilder::zeros(DType::F32, &device);
+            // Load real weights from HuggingFace
+            println!("📥 Loading autoencoder weights...");
+            let hub_client = HubClient::new().map_err(|e| anyhow::anyhow!("Failed to init HF client: {}", e))?;
+            let weights_path = hub_client.download_safetensors(&model)
+                .map_err(|e| anyhow::anyhow!("Failed to download weights: {}", e))?;
+            let var_builder = if !weights_path.is_empty() {
+                println!("✅ Downloaded {} weight file(s)", weights_path.len());
+                let paths: Vec<&str> = weights_path.iter().map(|p| p.to_str().unwrap()).collect();
+                unsafe { VarBuilder::from_mmaped_safetensors(&paths.iter().map(|p| std::path::PathBuf::from(p)).collect::<Vec<_>>(), DType::F32, &device) }
+                    .map_err(|e| anyhow::anyhow!("Failed to load safetensors: {}", e))?
+            } else {
+                println!("⚠️  No weights found, using zeroed weights");
+                VarBuilder::zeros(DType::F32, &device)
+            };
 
             let autoencoder = match CalmAutoencoder::load(var_builder, autoencoder_config.clone()) {
                 Ok(ae) => {

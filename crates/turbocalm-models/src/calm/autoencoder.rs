@@ -111,8 +111,22 @@ impl RmsNormLayer {
     }
 
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
-        candle_nn::ops::rms_norm(hidden_states, &self.weight, self.eps as f32)
-            .context("failed to run RMSNorm")
+        // Use the slow (pure computation) path that works on all devices including Metal
+        // candle_nn::ops::rms_norm uses CustomOp2 which lacks a Metal kernel
+        let hidden_size = hidden_states.dim(candle_core::D::Minus1)
+            .map_err(|e| anyhow::anyhow!("RMSNorm dim error: {}", e))?;
+        let variance = hidden_states
+            .sqr().map_err(|e| anyhow::anyhow!("sqr: {}", e))?
+            .mean_keepdim(candle_core::D::Minus1).map_err(|e| anyhow::anyhow!("mean: {}", e))?;
+        let eps_tensor = candle_core::Tensor::new(&[self.eps as f32], hidden_states.device())
+            .map_err(|e| anyhow::anyhow!("eps tensor: {}", e))?;
+        let var_shape = variance.shape().clone();
+        let hidden_states = hidden_states
+            .broadcast_div(&((&variance + &eps_tensor.broadcast_as(&var_shape)?)?.sqrt()?))
+            .map_err(|e| anyhow::anyhow!("broadcast_div: {}", e))?;
+        hidden_states
+            .broadcast_mul(&self.weight)
+            .map_err(|e| anyhow::anyhow!("broadcast_mul weight: {}", e))
     }
 }
 
@@ -217,8 +231,14 @@ impl AutoencoderLayer {
 
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         let residual = hidden_states;
-        let hidden_states = self.layernorm.forward(hidden_states)?;
-        let hidden_states = self.mlp.forward(&hidden_states)?;
+        let hidden_states = match self.layernorm.forward(hidden_states) {
+            Ok(h) => h,
+            Err(e) => anyhow::bail!("layernorm failed (input {:?}, weight {:?}): {:#}", hidden_states.shape(), self.layernorm.weight.shape(), e),
+        };
+        let hidden_states = match self.mlp.forward(&hidden_states) {
+            Ok(h) => h,
+            Err(e) => anyhow::bail!("mlp failed (input {:?}): {:#}", hidden_states.shape(), e),
+        };
         residual
             .broadcast_add(&hidden_states)
             .context("failed to add autoencoder residual")
@@ -308,7 +328,10 @@ impl CalmAutoencoderEncoder {
         for stage in 0..2 {
             for layer_offset in 0..self.num_stage_layers {
                 let layer_idx = stage * self.num_stage_layers + layer_offset;
-                hidden_states = self.encoder_layers[layer_idx].forward(&hidden_states)?;
+                hidden_states = match self.encoder_layers[layer_idx].forward(&hidden_states) {
+                    Ok(h) => h,
+                    Err(e) => anyhow::bail!("encoder_layer[{}] stage={} offset={} input={:?}: {:#}", layer_idx, stage, layer_offset, hidden_states.shape(), e),
+                };
             }
 
             if stage == 0 {
@@ -322,11 +345,12 @@ impl CalmAutoencoderEncoder {
                 hidden_states = self
                     .squeeze_layer
                     .forward(&hidden_states)
-                    .context("failed to run squeeze_layer")?;
+                    .with_context(|| format!("failed to run squeeze_layer, input shape: {:?}", hidden_states.shape()))?;
             }
         }
 
-        let hidden_states = self.norm.forward(&hidden_states)?;
+        let hidden_states = self.norm.forward(&hidden_states)
+            .with_context(|| format!("failed at encoder final norm, input shape: {:?}", hidden_states.shape()))?;
         let latent_states = self
             .hidden_to_latent
             .forward(&hidden_states)
@@ -499,12 +523,38 @@ impl CalmAutoencoder {
 
     fn load_encoder_embedding_weight(vb: &VarBuilder, config: &CalmAutoencoderConfig) -> Result<Tensor> {
         let shape = (config.vocab_size, config.hidden_size);
+
+        // Try various common embedding tensor patterns
         if vb.contains_tensor("encoder.embed_tokens.weight") {
             vb.pp("encoder")
                 .get(shape, "embed_tokens.weight")
                 .context("failed to load encoder.embed_tokens.weight")
+        } else if vb.contains_tensor("decoder.lm_head_weight") {
+            // CALM Autoencoder uses tied embeddings with decoder.lm_head_weight
+            vb.pp("decoder")
+                .get(shape, "lm_head_weight")
+                .context("failed to load decoder.lm_head_weight")
+        } else if vb.contains_tensor("embed_tokens.weight") {
+            vb.get(shape, "embed_tokens.weight")
+                .context("failed to load embed_tokens.weight")
+        } else if vb.contains_tensor("embeddings.word_embeddings.weight") {
+            vb.pp("embeddings")
+                .get(shape, "word_embeddings.weight")
+                .context("failed to load embeddings.word_embeddings.weight")
+        } else if vb.contains_tensor("transformer.wte.weight") {
+            vb.pp("transformer")
+                .get(shape, "wte.weight")
+                .context("failed to load transformer.wte.weight")
+        } else if vb.contains_tensor("model.embed_tokens.weight") {
+            vb.pp("model")
+                .get(shape, "embed_tokens.weight")
+                .context("failed to load model.embed_tokens.weight")
+        } else if vb.contains_tensor("lm_head.weight") {
+            // Some models tie input/output embeddings
+            vb.get(shape, "lm_head.weight")
+                .context("failed to load lm_head.weight")
         } else {
-            bail!("autoencoder checkpoint is missing encoder embedding weights")
+            bail!("autoencoder checkpoint is missing encoder embedding weights. Tried: encoder.embed_tokens.weight, decoder.lm_head_weight, embed_tokens.weight, embeddings.word_embeddings.weight, transformer.wte.weight, model.embed_tokens.weight, lm_head.weight")
         }
     }
 

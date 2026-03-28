@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 /// Configuration for CALM (Continuous Autoregressive Language Model)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct CALMConfig {
     // CALM-specific parameters
     pub ae_path: Option<String>,
@@ -43,6 +44,16 @@ pub struct CALMConfig {
     pub pad_token_id: Option<u32>,
     pub bos_token_id: u32,
     pub eos_token_id: u32,
+
+    // HuggingFace-specific fields (optional, for compatibility)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub architectures: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub torch_dtype: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transformers_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temp: Option<f64>,
 }
 
 impl Default for CALMConfig {
@@ -77,6 +88,10 @@ impl Default for CALMConfig {
             pad_token_id: None,
             bos_token_id: 1,
             eos_token_id: 2,
+            architectures: None,
+            torch_dtype: None,
+            transformers_version: None,
+            temp: None,
         }
     }
 }
@@ -284,5 +299,62 @@ mod tests {
         let json = serde_json::to_string(&config).unwrap();
         let parsed: CALMConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(config, parsed);
+    }
+
+    #[test]
+    fn test_hf_config_compatibility() {
+        // Test parsing a HuggingFace-style config with extra fields
+        let hf_config_json = r#"{
+            "ae_path": "/some/path",
+            "architectures": ["EnergyTransformer"],
+            "attention_bias": false,
+            "attention_dropout": 0.0,
+            "beta": 1.0,
+            "bos_token_id": 128000,
+            "eos_token_id": 128001,
+            "hidden_act": "silu",
+            "hidden_size": 1024,
+            "initializer_range": 0.02,
+            "intermediate_size": 2752,
+            "latent_size": 128,
+            "max_position_embeddings": 2048,
+            "mlp_bias": false,
+            "noise_size": 64,
+            "num_attention_heads": 16,
+            "num_hidden_layers": 16,
+            "num_key_value_heads": 16,
+            "num_mlp_layers": 4,
+            "pad_token_id": 128256,
+            "patch_size": 4,
+            "pretraining_tp": 1,
+            "rms_norm_eps": 1e-06,
+            "rope_scaling": null,
+            "rope_theta": 10000.0,
+            "temp": 1.0,
+            "tie_word_embeddings": false,
+            "torch_dtype": "float32",
+            "transformers_version": "4.43.0",
+            "use_cache": true,
+            "vocab_size": 128257,
+            "model_type": "energy"
+        }"#;
+
+        let config: CALMConfig = serde_json::from_str(hf_config_json).unwrap();
+
+        // Verify critical values match the real CALM-M config
+        assert_eq!(config.vocab_size, 128257);
+        assert_eq!(config.hidden_size, 1024);
+        assert_eq!(config.bos_token_id, 128000);
+        assert_eq!(config.eos_token_id, 128001);
+        assert_eq!(config.pad_token_id, Some(128256));
+        assert_eq!(config.num_hidden_layers, 16);
+        assert_eq!(config.num_attention_heads, 16);
+        assert_eq!(config.intermediate_size, 2752);
+
+        // Verify HF-specific fields are captured
+        assert_eq!(config.architectures, Some(vec!["EnergyTransformer".to_string()]));
+        assert_eq!(config.torch_dtype, Some("float32".to_string()));
+        assert_eq!(config.transformers_version, Some("4.43.0".to_string()));
+        assert_eq!(config.temp, Some(1.0));
     }
 }
