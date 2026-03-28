@@ -83,21 +83,38 @@ impl HubClient {
             }
         }
 
-        // Try sharded safetensors files
-        for i in 1..=20 {
-            // Try up to 20 shards
-            let filename = format!("model-{:05}-of-{:05}.safetensors", i, i);
-            match repo.get(&filename) {
-                Ok(path) => {
-                    debug!("Downloaded shard {}", filename);
-                    downloaded_files.push(path);
-                }
-                Err(_) => {
-                    if i == 1 {
-                        // No sharded files found
-                        break;
+        // Try sharded safetensors via index file (correct HuggingFace pattern)
+        match repo.get("model.safetensors.index.json") {
+            Ok(index_path) => {
+                debug!("Found safetensors index file, parsing shard list");
+                if let Ok(index_content) = std::fs::read_to_string(&index_path) {
+                    if let Ok(index_json) = serde_json::from_str::<serde_json::Value>(&index_content) {
+                        // Extract unique shard filenames from weight_map
+                        if let Some(weight_map) = index_json.get("weight_map").and_then(|v| v.as_object()) {
+                            let mut shard_files: Vec<String> = weight_map
+                                .values()
+                                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                .collect();
+                            shard_files.sort();
+                            shard_files.dedup();
+
+                            for shard_filename in &shard_files {
+                                match repo.get(shard_filename) {
+                                    Ok(path) => {
+                                        debug!("Downloaded shard {}", shard_filename);
+                                        downloaded_files.push(path);
+                                    }
+                                    Err(e) => {
+                                        warn!("Failed to download shard {}: {}", shard_filename, e);
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
+            }
+            Err(_) => {
+                debug!("No safetensors index file found");
             }
         }
 
