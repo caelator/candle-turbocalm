@@ -47,7 +47,11 @@ mod tests {
 
         let qt = q.t().map_err(anyhow::Error::from)?;
         let identity_approx = qt.matmul(&q).map_err(anyhow::Error::from)?;
-        let identity_vec = identity_approx.flatten_all().map_err(anyhow::Error::from)?.to_vec1::<f32>().map_err(anyhow::Error::from)?;
+        let identity_vec = identity_approx
+            .flatten_all()
+            .map_err(anyhow::Error::from)?
+            .to_vec1::<f32>()
+            .map_err(anyhow::Error::from)?;
 
         for i in 0..dim {
             for j in 0..dim {

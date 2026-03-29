@@ -1,14 +1,12 @@
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use candle_core::Device;
 use clap::{Parser, Subcommand, ValueEnum};
 use turbocalm_models::CalmAutoencoderConfig;
-use turbocalm_train::server::{resolve_mode, ServerState};
+use turbocalm_train::server::{load_model_or_random, resolve_mode, ServerState};
 use turbocalm_train::{
-    checkpoint, corpus, run_eval, serve, spike, EmbeddingModel, EvalCorpus, Trainer,
-    TrainingConfig, DEFAULT_MODEL_NAME,
+    checkpoint, corpus, run_eval, serve, spike, EmbeddingModel, EvalCorpus, Trainer, TrainingConfig,
 };
 
 #[derive(Parser)]
@@ -28,7 +26,7 @@ enum Commands {
         corpus: PathBuf,
         #[arg(long)]
         config: Option<PathBuf>,
-        #[arg(long, value_enum, default_value_t = DeviceArg::Auto)]
+        #[arg(long, value_enum, default_value_t = DeviceArg::Cpu)]
         device: DeviceArg,
         #[arg(long, default_value_t = 32)]
         batch_size: usize,
@@ -57,7 +55,7 @@ enum Commands {
         checkpoint: PathBuf,
         #[arg(long)]
         config: Option<PathBuf>,
-        #[arg(long, value_enum, default_value_t = DeviceArg::Auto)]
+        #[arg(long, value_enum, default_value_t = DeviceArg::Cpu)]
         device: DeviceArg,
     },
     /// Serve OpenAI-compatible embeddings over HTTP.
@@ -68,7 +66,7 @@ enum Commands {
         checkpoint: Option<PathBuf>,
         #[arg(long)]
         config: Option<PathBuf>,
-        #[arg(long, value_enum, default_value_t = DeviceArg::Auto)]
+        #[arg(long, value_enum, default_value_t = DeviceArg::Cpu)]
         device: DeviceArg,
         #[arg(long, default_value_t = false, conflicts_with = "chunked")]
         pooled: bool,
@@ -162,8 +160,17 @@ async fn main() -> Result<()> {
             device,
             pooled,
             chunked,
-        } => handle_serve(port, checkpoint.as_deref(), config.as_deref(), device, pooled, chunked)
-            .await?,
+        } => {
+            handle_serve(
+                port,
+                checkpoint.as_deref(),
+                config.as_deref(),
+                device,
+                pooled,
+                chunked,
+            )
+            .await?
+        }
         Commands::Corpus { command } => match command {
             CorpusCommands::Build { sources, output } => handle_corpus_build(&sources, &output)?,
         },
@@ -272,31 +279,12 @@ async fn handle_serve(
     let config = load_model_config(config_path, checkpoint_path.as_deref())?;
     let device = resolve_device(device)?;
 
-    let model = match checkpoint_path.as_deref() {
-        Some(path) => {
-            println!("loading checkpoint {}", path.display());
-            match EmbeddingModel::from_checkpoint(path, config.clone(), device.clone()) {
-                Ok(model) => model,
-                Err(error) => {
-                    println!(
-                        "failed to load checkpoint {}; falling back to random weights: {error:#}",
-                        path.display()
-                    );
-                    EmbeddingModel::random(config.clone(), device.clone())?
-                }
-            }
-        }
-        None => {
-            println!("no checkpoint found; starting with random weights");
-            EmbeddingModel::random(config.clone(), device.clone())?
-        }
-    };
-
-    let state = ServerState {
-        model: Arc::new(model),
-        mode,
-        model_name: Arc::from(DEFAULT_MODEL_NAME),
-    };
+    match checkpoint_path.as_deref() {
+        Some(path) => println!("loading checkpoint {}", path.display()),
+        None => println!("no checkpoint found; starting with random weights"),
+    }
+    let model = load_model_or_random(checkpoint_path.as_deref(), config, device)?;
+    let state = ServerState::new(model, mode);
 
     serve(state, port).await
 }
@@ -364,8 +352,9 @@ fn load_model_config(
 
 fn resolve_device(device: DeviceArg) -> Result<Device> {
     match device {
-        DeviceArg::Auto => turbocalm_core::auto_device().context("failed to resolve auto device"),
-        DeviceArg::Cpu => Ok(Device::Cpu),
-        DeviceArg::Metal => Device::new_metal(0).context("failed to create Metal device"),
+        DeviceArg::Auto | DeviceArg::Cpu => Ok(Device::Cpu),
+        DeviceArg::Metal => {
+            bail!("Metal is disabled for turbocalm-train in this environment; use --device cpu")
+        }
     }
 }

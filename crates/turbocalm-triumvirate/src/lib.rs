@@ -6,11 +6,10 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use candle_core::{DType, Tensor};
+use candle_core::{DType, Device, Tensor};
 use candle_nn::VarBuilder;
 use serde::{Deserialize, Serialize};
 use turbocalm_checkpoint::CheckpointDownloader;
-use turbocalm_core::auto_device;
 use turbocalm_models::{CalmAutoencoder, CalmAutoencoderConfig, CalmLanguageModel, CalmLmConfig};
 
 /// Embedding engine configuration for Triumvirate.
@@ -46,7 +45,10 @@ impl EmbeddingEngine {
     }
 
     /// Create a new embedding engine with explicit settings.
-    pub fn with_config<P: AsRef<Path>>(config_path: P, engine_config: EmbeddingEngineConfig) -> Self {
+    pub fn with_config<P: AsRef<Path>>(
+        config_path: P,
+        engine_config: EmbeddingEngineConfig,
+    ) -> Self {
         Self {
             autoencoder: None,
             config_path: config_path.as_ref().to_string_lossy().to_string(),
@@ -57,17 +59,25 @@ impl EmbeddingEngine {
 
     /// Load the underlying CalmAutoencoder model.
     pub fn load_model(&mut self) -> Result<()> {
-        let device = auto_device()?;
+        let device = Device::Cpu;
         let autoencoder_config = self.resolve_autoencoder_config()?;
 
         let autoencoder = match self.preferred_trained_checkpoint() {
-            Some(path) => CalmAutoencoder::from_safetensors(
+            Some(path) => match CalmAutoencoder::from_safetensors(
                 &path,
                 autoencoder_config.clone(),
                 DType::F32,
                 &device,
-            )
-            .with_context(|| format!("failed to load trained checkpoint {}", path.display()))?,
+            ) {
+                Ok(autoencoder) => autoencoder,
+                Err(error) => {
+                    eprintln!(
+                        "warning: failed to load trained checkpoint {}: {error:#}; falling back to configured checkpoint source",
+                        path.display()
+                    );
+                    self.load_fallback_autoencoder(&autoencoder_config, &device)?
+                }
+            },
             None => self.load_fallback_autoencoder(&autoencoder_config, &device)?,
         };
 
@@ -86,7 +96,9 @@ impl EmbeddingEngine {
 
     /// Get embedding dimension.
     pub fn embedding_dim(&self) -> Option<usize> {
-        self.autoencoder_config.as_ref().map(|config| config.latent_size)
+        self.autoencoder_config
+            .as_ref()
+            .map(|config| config.latent_size)
     }
 
     fn resolve_autoencoder_config(&self) -> Result<CalmAutoencoderConfig> {
@@ -191,7 +203,7 @@ impl EnergyScorer {
             ..Default::default()
         };
 
-        let device = auto_device()?;
+        let device = Device::Cpu;
         let var_builder = VarBuilder::zeros(DType::F32, &device);
         let language_model = CalmLanguageModel::new(&lm_config, var_builder)?;
 
@@ -255,7 +267,8 @@ fn autoencoder_from_model_paths(
 
     let vb = unsafe { VarBuilder::from_mmaped_safetensors(paths, DType::F32, device) }
         .context("failed to mmap downloaded safetensors shards")?;
-    CalmAutoencoder::load(vb, config.clone()).context("failed to load autoencoder from sharded weights")
+    CalmAutoencoder::load(vb, config.clone())
+        .context("failed to load autoencoder from sharded weights")
 }
 
 fn zeroed_autoencoder(

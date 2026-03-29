@@ -53,23 +53,35 @@ fn test_end_to_end_autoencoder_pipeline() -> Result<()> {
 
     // Test autoencoder encode
     let latent_embeddings = autoencoder.encode_chunked(&input_ids)?;
-    println!("✓ Encoded to latents with shape: {:?}", latent_embeddings.dims());
+    println!(
+        "✓ Encoded to latents with shape: {:?}",
+        latent_embeddings.dims()
+    );
 
     // Test autoencoder decode
     let decoded_logits = autoencoder.decode(&latent_embeddings)?;
-    println!("✓ Decoded to logits with shape: {:?}", decoded_logits.dims());
+    println!(
+        "✓ Decoded to logits with shape: {:?}",
+        decoded_logits.dims()
+    );
 
     // Verify shapes are correct
     assert_eq!(latent_embeddings.dims().len(), 3); // [batch, patches, latent_size]
-    assert_eq!(decoded_logits.dims().len(), 3);    // [batch, seq_len, vocab_size]
+    assert_eq!(decoded_logits.dims().len(), 3); // [batch, seq_len, vocab_size]
     assert_eq!(decoded_logits.dims()[2], vocab_size);
 
     // Verify that the pipeline produces reasonable outputs (not NaN/Inf)
     let latent_data = latent_embeddings.flatten_all()?.to_vec1::<f32>()?;
     let logit_data = decoded_logits.flatten_all()?.to_vec1::<f32>()?;
 
-    assert!(latent_data.iter().all(|&x| x.is_finite()), "Latent outputs should be finite");
-    assert!(logit_data.iter().all(|&x| x.is_finite()), "Logit outputs should be finite");
+    assert!(
+        latent_data.iter().all(|&x| x.is_finite()),
+        "Latent outputs should be finite"
+    );
+    assert!(
+        logit_data.iter().all(|&x| x.is_finite()),
+        "Logit outputs should be finite"
+    );
 
     println!("✓ End-to-end autoencoder pipeline successful");
 

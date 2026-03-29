@@ -146,7 +146,9 @@ impl Trainer {
                 self.config.temperature,
             )?;
             let loss_value = scalar_f32(&loss)?;
-            let mut grads = loss.backward().context("failed to backprop training loss")?;
+            let mut grads = loss
+                .backward()
+                .context("failed to backprop training loss")?;
             let grad_norm = clip_gradients(&mut grads, &self.trainable_vars, MAX_GRAD_NORM)?;
 
             self.optimizer
@@ -210,12 +212,14 @@ impl Trainer {
                             checkpoint_path.display()
                         )
                     })?;
-                save_checkpoint_config(self.model.config(), &checkpoint.path).with_context(|| {
-                    format!(
-                        "failed to save checkpoint config for {}",
-                        checkpoint.path.display()
-                    )
-                })?;
+                save_checkpoint_config(self.model.config(), &checkpoint.path).with_context(
+                    || {
+                        format!(
+                            "failed to save checkpoint config for {}",
+                            checkpoint.path.display()
+                        )
+                    },
+                )?;
                 best_checkpoint = Some(checkpoint);
             } else {
                 plateau_count += 1;

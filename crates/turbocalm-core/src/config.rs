@@ -352,7 +352,10 @@ mod tests {
         assert_eq!(config.intermediate_size, 2752);
 
         // Verify HF-specific fields are captured
-        assert_eq!(config.architectures, Some(vec!["EnergyTransformer".to_string()]));
+        assert_eq!(
+            config.architectures,
+            Some(vec!["EnergyTransformer".to_string()])
+        );
         assert_eq!(config.torch_dtype, Some("float32".to_string()));
         assert_eq!(config.transformers_version, Some("4.43.0".to_string()));
         assert_eq!(config.temp, Some(1.0));

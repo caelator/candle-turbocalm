@@ -465,22 +465,58 @@ mod tests {
             cmaes.tell(&population, &fitness).unwrap();
 
             // Verify no NaN/Inf in any iteration
-            assert!(cmaes.sigma.is_finite(), "Iteration {}: sigma is not finite", iteration);
-            assert!(!cmaes.sigma.is_nan(), "Iteration {}: sigma is NaN", iteration);
-            assert!(cmaes.mean.iter().all(|&x| x.is_finite()), "Iteration {}: mean contains non-finite values", iteration);
-            assert!(cmaes.pc.iter().all(|&x| x.is_finite()), "Iteration {}: pc contains non-finite values", iteration);
-            assert!(cmaes.ps.iter().all(|&x| x.is_finite()), "Iteration {}: ps contains non-finite values", iteration);
+            assert!(
+                cmaes.sigma.is_finite(),
+                "Iteration {}: sigma is not finite",
+                iteration
+            );
+            assert!(
+                !cmaes.sigma.is_nan(),
+                "Iteration {}: sigma is NaN",
+                iteration
+            );
+            assert!(
+                cmaes.mean.iter().all(|&x| x.is_finite()),
+                "Iteration {}: mean contains non-finite values",
+                iteration
+            );
+            assert!(
+                cmaes.pc.iter().all(|&x| x.is_finite()),
+                "Iteration {}: pc contains non-finite values",
+                iteration
+            );
+            assert!(
+                cmaes.ps.iter().all(|&x| x.is_finite()),
+                "Iteration {}: ps contains non-finite values",
+                iteration
+            );
 
             // Check covariance matrix
             for row in &cmaes.covariance {
-                assert!(row.iter().all(|&x| x.is_finite()), "Iteration {}: covariance contains non-finite values", iteration);
+                assert!(
+                    row.iter().all(|&x| x.is_finite()),
+                    "Iteration {}: covariance contains non-finite values",
+                    iteration
+                );
             }
 
             // Verify current best is valid
             let best = cmaes.current_best();
-            assert!(best.clipping_percentile.is_finite() && best.clipping_percentile >= 0.01 && best.clipping_percentile <= 0.99);
-            assert!(best.scale_multiplier.is_finite() && best.scale_multiplier >= 0.1 && best.scale_multiplier <= 10.0);
-            assert!(best.qjl_threshold.is_finite() && best.qjl_threshold >= 1e-6 && best.qjl_threshold <= 1e-2);
+            assert!(
+                best.clipping_percentile.is_finite()
+                    && best.clipping_percentile >= 0.01
+                    && best.clipping_percentile <= 0.99
+            );
+            assert!(
+                best.scale_multiplier.is_finite()
+                    && best.scale_multiplier >= 0.1
+                    && best.scale_multiplier <= 10.0
+            );
+            assert!(
+                best.qjl_threshold.is_finite()
+                    && best.qjl_threshold >= 1e-6
+                    && best.qjl_threshold <= 1e-2
+            );
         }
     }
 
@@ -524,13 +560,17 @@ mod tests {
         let extreme_fitness = vec![f64::MAX / 1e10, f64::MIN_POSITIVE * 1e10, 1.0, 0.0];
 
         // This should also work without issues
-        extreme_cmaes.tell(&extreme_population, &extreme_fitness).unwrap();
+        extreme_cmaes
+            .tell(&extreme_population, &extreme_fitness)
+            .unwrap();
 
         assert!(extreme_cmaes.sigma.is_finite());
         assert!(extreme_cmaes.mean.iter().all(|&x| x.is_finite()));
 
         let extreme_best = extreme_cmaes.current_best();
-        assert!(extreme_best.clipping_percentile >= 0.01 && extreme_best.clipping_percentile <= 0.99);
+        assert!(
+            extreme_best.clipping_percentile >= 0.01 && extreme_best.clipping_percentile <= 0.99
+        );
         assert!(extreme_best.scale_multiplier >= 0.1 && extreme_best.scale_multiplier <= 10.0);
         assert!(extreme_best.qjl_threshold >= 1e-6 && extreme_best.qjl_threshold <= 1e-2);
     }

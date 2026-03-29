@@ -1,11 +1,19 @@
-use clap::{Parser, Subcommand};
-use turbocalm_core::{CALMConfig, hub::convenience, hub::HubClient, auto_device, TokenizerLoader, TokenizerType, tokenizer::convenience as tokenizer_convenience, QuantProfile};
-use turbocalm_checkpoint::{CheckpointDownloader, StateDictParser, RemappingPresets};
-use turbocalm_models::{CalmAutoencoder, CalmAutoencoderConfig, CalmLanguageModel, CalmLmConfig, CalmGenerationModel, CalmGenerationConfig};
-use turbocalm_calibrate::{dataset::CalibrationDataset, search::SearchFactory, profiles::ProfileExporter};
-use turbocalm_kv::cache::{dense::DenseKvCache, TurboKvCache};
 use candle_core::{DType, Tensor};
 use candle_nn::VarBuilder;
+use clap::{Parser, Subcommand};
+use turbocalm_calibrate::{
+    dataset::CalibrationDataset, profiles::ProfileExporter, search::SearchFactory,
+};
+use turbocalm_checkpoint::{CheckpointDownloader, RemappingPresets, StateDictParser};
+use turbocalm_core::{
+    auto_device, hub::convenience, hub::HubClient, tokenizer::convenience as tokenizer_convenience,
+    CALMConfig, QuantProfile, TokenizerLoader, TokenizerType,
+};
+use turbocalm_kv::cache::{dense::DenseKvCache, TurboKvCache};
+use turbocalm_models::{
+    CalmAutoencoder, CalmAutoencoderConfig, CalmGenerationConfig, CalmGenerationModel,
+    CalmLanguageModel, CalmLmConfig,
+};
 
 #[derive(Parser)]
 #[command(
@@ -87,7 +95,10 @@ fn main() -> anyhow::Result<()> {
 
             // Check if model exists first
             if !convenience::model_exists(&model) {
-                return Err(anyhow::anyhow!("❌ Model '{}' not found on HuggingFace Hub", model));
+                return Err(anyhow::anyhow!(
+                    "❌ Model '{}' not found on HuggingFace Hub",
+                    model
+                ));
             }
 
             // Download config.json
@@ -120,42 +131,68 @@ fn main() -> anyhow::Result<()> {
                                     match serde_json::from_str::<serde_json::Value>(&content) {
                                         Ok(json) => {
                                             println!("\n📊 Model Configuration (Generic):");
-                                            if let Some(model_type) = json.get("model_type").and_then(|v| v.as_str()) {
+                                            if let Some(model_type) =
+                                                json.get("model_type").and_then(|v| v.as_str())
+                                            {
                                                 println!("  Model Type:        {}", model_type);
                                             }
-                                            if let Some(hidden_size) = json.get("hidden_size").and_then(|v| v.as_u64()) {
+                                            if let Some(hidden_size) =
+                                                json.get("hidden_size").and_then(|v| v.as_u64())
+                                            {
                                                 println!("  Hidden Size:       {}", hidden_size);
                                             }
-                                            if let Some(num_layers) = json.get("num_hidden_layers").and_then(|v| v.as_u64()) {
+                                            if let Some(num_layers) = json
+                                                .get("num_hidden_layers")
+                                                .and_then(|v| v.as_u64())
+                                            {
                                                 println!("  Layers:            {}", num_layers);
                                             }
-                                            if let Some(num_heads) = json.get("num_attention_heads").and_then(|v| v.as_u64()) {
+                                            if let Some(num_heads) = json
+                                                .get("num_attention_heads")
+                                                .and_then(|v| v.as_u64())
+                                            {
                                                 println!("  Attention Heads:   {}", num_heads);
                                             }
-                                            if let Some(vocab_size) = json.get("vocab_size").and_then(|v| v.as_u64()) {
+                                            if let Some(vocab_size) =
+                                                json.get("vocab_size").and_then(|v| v.as_u64())
+                                            {
                                                 println!("  Vocab Size:        {}", vocab_size);
                                             }
-                                            if let Some(patch_size) = json.get("patch_size").and_then(|v| v.as_u64()) {
+                                            if let Some(patch_size) =
+                                                json.get("patch_size").and_then(|v| v.as_u64())
+                                            {
                                                 println!("  Patch Size:        {}", patch_size);
                                             }
-                                            if let Some(latent_size) = json.get("latent_size").and_then(|v| v.as_u64()) {
+                                            if let Some(latent_size) =
+                                                json.get("latent_size").and_then(|v| v.as_u64())
+                                            {
                                                 println!("  Latent Size:       {}", latent_size);
                                             }
                                         }
                                         Err(e) => {
-                                            return Err(anyhow::anyhow!("❌ Failed to parse config.json: {}", e));
+                                            return Err(anyhow::anyhow!(
+                                                "❌ Failed to parse config.json: {}",
+                                                e
+                                            ));
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    return Err(anyhow::anyhow!("❌ Failed to read downloaded config: {}", e));
+                                    return Err(anyhow::anyhow!(
+                                        "❌ Failed to read downloaded config: {}",
+                                        e
+                                    ));
                                 }
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    return Err(anyhow::anyhow!("❌ Failed to download config for '{}': {}", model, e));
+                    return Err(anyhow::anyhow!(
+                        "❌ Failed to download config for '{}': {}",
+                        model,
+                        e
+                    ));
                 }
             }
 
@@ -176,7 +213,10 @@ fn main() -> anyhow::Result<()> {
             let downloader = match CheckpointDownloader::new() {
                 Ok(d) => d,
                 Err(e) => {
-                    return Err(anyhow::anyhow!("❌ Failed to create checkpoint downloader: {}", e));
+                    return Err(anyhow::anyhow!(
+                        "❌ Failed to create checkpoint downloader: {}",
+                        e
+                    ));
                 }
             };
 
@@ -186,7 +226,11 @@ fn main() -> anyhow::Result<()> {
                     cp
                 }
                 Err(e) => {
-                    return Err(anyhow::anyhow!("❌ Failed to download checkpoint for '{}': {}", model, e));
+                    return Err(anyhow::anyhow!(
+                        "❌ Failed to download checkpoint for '{}': {}",
+                        model,
+                        e
+                    ));
                 }
             };
 
@@ -229,7 +273,10 @@ fn main() -> anyhow::Result<()> {
             // Create output directory if needed
             if let Some(parent) = std::path::Path::new(&output).parent() {
                 if let Err(e) = std::fs::create_dir_all(parent) {
-                    return Err(anyhow::anyhow!("❌ Failed to create output directory: {}", e));
+                    return Err(anyhow::anyhow!(
+                        "❌ Failed to create output directory: {}",
+                        e
+                    ));
                 }
             }
 
@@ -239,7 +286,11 @@ fn main() -> anyhow::Result<()> {
                 let (dtype, shape, bytes) = match tensor_to_safetensors_parts(tensor) {
                     Ok(parts) => parts,
                     Err(e) => {
-                        return Err(anyhow::anyhow!("❌ Failed to convert tensor '{}': {}", name, e));
+                        return Err(anyhow::anyhow!(
+                            "❌ Failed to convert tensor '{}': {}",
+                            name,
+                            e
+                        ));
                     }
                 };
                 safetensor_data.insert(name.clone(), (dtype, shape, bytes));
@@ -252,13 +303,19 @@ fn main() -> anyhow::Result<()> {
                     .map(|(name, (dtype, shape, data))| {
                         (
                             name.clone(),
-                            safetensors::tensor::TensorView::new(*dtype, shape.clone(), data).unwrap(),
+                            safetensors::tensor::TensorView::new(*dtype, shape.clone(), data)
+                                .unwrap(),
                         )
                     })
                     .collect();
 
-            if let Err(e) = safetensors::serialize_to_file(&st_data, &None, std::path::Path::new(&output)) {
-                return Err(anyhow::anyhow!("❌ Failed to write safetensors file: {}", e));
+            if let Err(e) =
+                safetensors::serialize_to_file(&st_data, &None, std::path::Path::new(&output))
+            {
+                return Err(anyhow::anyhow!(
+                    "❌ Failed to write safetensors file: {}",
+                    e
+                ));
             }
 
             println!("✅ Model conversion completed successfully!");
@@ -274,7 +331,10 @@ fn main() -> anyhow::Result<()> {
             let tokenizer_loader = match TokenizerLoader::new() {
                 Ok(loader) => loader,
                 Err(e) => {
-                    return Err(anyhow::anyhow!("❌ Failed to create tokenizer loader: {}", e));
+                    return Err(anyhow::anyhow!(
+                        "❌ Failed to create tokenizer loader: {}",
+                        e
+                    ));
                 }
             };
 
@@ -284,7 +344,11 @@ fn main() -> anyhow::Result<()> {
                     tok
                 }
                 Err(e) => {
-                    return Err(anyhow::anyhow!("❌ Failed to load tokenizer from '{}': {}", model, e));
+                    return Err(anyhow::anyhow!(
+                        "❌ Failed to load tokenizer from '{}': {}",
+                        model,
+                        e
+                    ));
                 }
             };
 
@@ -313,7 +377,8 @@ fn main() -> anyhow::Result<()> {
             };
 
             // Try to load as CALM config first, fall back to creating default autoencoder config
-            let autoencoder_config = match CALMConfig::from_json_file(config_path.to_str().unwrap()) {
+            let autoencoder_config = match CALMConfig::from_json_file(config_path.to_str().unwrap())
+            {
                 Ok(calm_config) => {
                     println!("✅ Loaded CALM configuration");
                     // Convert CALM config to autoencoder config
@@ -349,14 +414,25 @@ fn main() -> anyhow::Result<()> {
 
             // Load real weights from HuggingFace
             println!("📥 Loading autoencoder weights...");
-            let hub_client = HubClient::new().map_err(|e| anyhow::anyhow!("Failed to init HF client: {}", e))?;
-            let weights_path = hub_client.download_safetensors(&model)
+            let hub_client =
+                HubClient::new().map_err(|e| anyhow::anyhow!("Failed to init HF client: {}", e))?;
+            let weights_path = hub_client
+                .download_safetensors(&model)
                 .map_err(|e| anyhow::anyhow!("Failed to download weights: {}", e))?;
             let var_builder = if !weights_path.is_empty() {
                 println!("✅ Downloaded {} weight file(s)", weights_path.len());
                 let paths: Vec<&str> = weights_path.iter().map(|p| p.to_str().unwrap()).collect();
-                unsafe { VarBuilder::from_mmaped_safetensors(&paths.iter().map(|p| std::path::PathBuf::from(p)).collect::<Vec<_>>(), DType::F32, &device) }
-                    .map_err(|e| anyhow::anyhow!("Failed to load safetensors: {}", e))?
+                unsafe {
+                    VarBuilder::from_mmaped_safetensors(
+                        &paths
+                            .iter()
+                            .map(|p| std::path::PathBuf::from(p))
+                            .collect::<Vec<_>>(),
+                        DType::F32,
+                        &device,
+                    )
+                }
+                .map_err(|e| anyhow::anyhow!("Failed to load safetensors: {}", e))?
             } else {
                 println!("⚠️  No weights found, using zeroed weights");
                 VarBuilder::zeros(DType::F32, &device)
@@ -395,24 +471,29 @@ fn main() -> anyhow::Result<()> {
             // Print embedding shape and first few values
             println!("\n📈 Encoding Results:");
             println!("  Input Shape:       {:?}", input_tensor.shape().dims());
-            println!("  Embedding Shape:   {:?}", latent_embeddings.shape().dims());
+            println!(
+                "  Embedding Shape:   {:?}",
+                latent_embeddings.shape().dims()
+            );
 
             // Print first few values (note: these are zeros since we used VarBuilder::zeros)
             match latent_embeddings.flatten_all() {
-                Ok(flat) => {
-                    match flat.to_vec1::<f32>() {
-                        Ok(values) => {
-                            let preview_len = std::cmp::min(8, values.len());
-                            println!("  First {} values:   {:?}", preview_len, &values[..preview_len]);
-                            if values.len() > preview_len {
-                                println!("  ... {} more values", values.len() - preview_len);
-                            }
-                        }
-                        Err(_) => {
-                            println!("  (Could not extract embedding values)");
+                Ok(flat) => match flat.to_vec1::<f32>() {
+                    Ok(values) => {
+                        let preview_len = std::cmp::min(8, values.len());
+                        println!(
+                            "  First {} values:   {:?}",
+                            preview_len,
+                            &values[..preview_len]
+                        );
+                        if values.len() > preview_len {
+                            println!("  ... {} more values", values.len() - preview_len);
                         }
                     }
-                }
+                    Err(_) => {
+                        println!("  (Could not extract embedding values)");
+                    }
+                },
                 Err(_) => {
                     println!("  (Could not flatten embedding tensor)");
                 }
@@ -423,7 +504,11 @@ fn main() -> anyhow::Result<()> {
 
             Ok(())
         }
-        Commands::Score { model, text, dry_run } => {
+        Commands::Score {
+            model,
+            text,
+            dry_run,
+        } => {
             if dry_run {
                 println!("🔍 Score command dry run for model: {model}");
                 println!("📝 Text to score: \"{text}\"");
@@ -448,7 +533,10 @@ fn main() -> anyhow::Result<()> {
             let tokenizer_loader = match TokenizerLoader::new() {
                 Ok(loader) => loader,
                 Err(e) => {
-                    return Err(anyhow::anyhow!("❌ Failed to create tokenizer loader: {}", e));
+                    return Err(anyhow::anyhow!(
+                        "❌ Failed to create tokenizer loader: {}",
+                        e
+                    ));
                 }
             };
 
@@ -471,30 +559,31 @@ fn main() -> anyhow::Result<()> {
             };
 
             // Parse as CALM config and create LM config
-            let (calm_config, lm_config) = match CALMConfig::from_json_file(config_path.to_str().unwrap()) {
-                Ok(calm_config) => {
-                    println!("✅ Loaded CALM configuration");
-                    let lm_config = CalmLmConfig {
-                        hidden_size: calm_config.hidden_size as usize,
-                        intermediate_size: calm_config.intermediate_size as usize,
-                        num_hidden_layers: calm_config.num_hidden_layers as usize,
-                        num_attention_heads: calm_config.num_attention_heads as usize,
-                        num_key_value_heads: calm_config.num_key_value_heads() as usize,
-                        latent_size: calm_config.latent_size as usize,
-                        patch_size: calm_config.patch_size as usize,
-                        max_position_embeddings: calm_config.max_position_embeddings as usize,
-                        rms_norm_eps: calm_config.rms_norm_eps,
-                        rope_theta: calm_config.rope_theta,
-                        beta: calm_config.beta,
-                        ..Default::default()
-                    };
-                    (calm_config, lm_config)
-                }
-                Err(_) => {
-                    println!("⚠️  Could not parse as CALM config, using defaults");
-                    (CALMConfig::default(), CalmLmConfig::default())
-                }
-            };
+            let (calm_config, lm_config) =
+                match CALMConfig::from_json_file(config_path.to_str().unwrap()) {
+                    Ok(calm_config) => {
+                        println!("✅ Loaded CALM configuration");
+                        let lm_config = CalmLmConfig {
+                            hidden_size: calm_config.hidden_size as usize,
+                            intermediate_size: calm_config.intermediate_size as usize,
+                            num_hidden_layers: calm_config.num_hidden_layers as usize,
+                            num_attention_heads: calm_config.num_attention_heads as usize,
+                            num_key_value_heads: calm_config.num_key_value_heads() as usize,
+                            latent_size: calm_config.latent_size as usize,
+                            patch_size: calm_config.patch_size as usize,
+                            max_position_embeddings: calm_config.max_position_embeddings as usize,
+                            rms_norm_eps: calm_config.rms_norm_eps,
+                            rope_theta: calm_config.rope_theta,
+                            beta: calm_config.beta,
+                            ..Default::default()
+                        };
+                        (calm_config, lm_config)
+                    }
+                    Err(_) => {
+                        println!("⚠️  Could not parse as CALM config, using defaults");
+                        (CALMConfig::default(), CalmLmConfig::default())
+                    }
+                };
 
             // Initialize device
             let device = match auto_device() {
@@ -584,24 +673,26 @@ fn main() -> anyhow::Result<()> {
 
             // Compute energy score (simple mean norm as a placeholder for actual energy function)
             let energy_score = match lm_output.flatten_all() {
-                Ok(flat) => {
-                    match flat.to_vec1::<f32>() {
-                        Ok(values) => {
-                            let mean_energy = values.iter().sum::<f32>() / values.len() as f32;
-                            let norm_energy = values.iter().map(|x| x * x).sum::<f32>().sqrt() / values.len() as f32;
-                            (mean_energy, norm_energy)
-                        }
-                        Err(_) => (0.0, 0.0)
+                Ok(flat) => match flat.to_vec1::<f32>() {
+                    Ok(values) => {
+                        let mean_energy = values.iter().sum::<f32>() / values.len() as f32;
+                        let norm_energy =
+                            values.iter().map(|x| x * x).sum::<f32>().sqrt() / values.len() as f32;
+                        (mean_energy, norm_energy)
                     }
-                }
-                Err(_) => (0.0, 0.0)
+                    Err(_) => (0.0, 0.0),
+                },
+                Err(_) => (0.0, 0.0),
             };
 
             // Print the energy score
             println!("\n📊 Energy Scoring Results:");
             println!("  Input Text:        \"{}\"", text);
             println!("  Token Count:       {}", token_ids.len());
-            println!("  Latent Shape:      {:?}", latent_embeddings.shape().dims());
+            println!(
+                "  Latent Shape:      {:?}",
+                latent_embeddings.shape().dims()
+            );
             println!("  Output Shape:      {:?}", lm_output.shape().dims());
             println!("  Mean Energy:       {:.6}", energy_score.0);
             println!("  Norm Energy:       {:.6}", energy_score.1);
@@ -645,7 +736,10 @@ fn main() -> anyhow::Result<()> {
             let tokenizer_loader = match TokenizerLoader::new() {
                 Ok(loader) => loader,
                 Err(e) => {
-                    return Err(anyhow::anyhow!("❌ Failed to create tokenizer loader: {}", e));
+                    return Err(anyhow::anyhow!(
+                        "❌ Failed to create tokenizer loader: {}",
+                        e
+                    ));
                 }
             };
 
@@ -702,15 +796,19 @@ fn main() -> anyhow::Result<()> {
             println!("🧠 Creating generation model with zeroed weights (demo mode)...");
             let var_builder = VarBuilder::zeros(DType::F32, &device);
 
-            let mut generation_model = match CalmGenerationModel::load(var_builder, calm_config, autoencoder_config) {
-                Ok(model) => {
-                    println!("✅ Created generation model");
-                    model
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!("❌ Failed to create generation model: {}", e));
-                }
-            };
+            let mut generation_model =
+                match CalmGenerationModel::load(var_builder, calm_config, autoencoder_config) {
+                    Ok(model) => {
+                        println!("✅ Created generation model");
+                        model
+                    }
+                    Err(e) => {
+                        return Err(anyhow::anyhow!(
+                            "❌ Failed to create generation model: {}",
+                            e
+                        ));
+                    }
+                };
 
             // Tokenize input prompt
             let prompt_token_ids = match tokenizer_convenience::encode_text(&tokenizer, &prompt) {
@@ -733,42 +831,57 @@ fn main() -> anyhow::Result<()> {
 
             // Run generate() with provided max_tokens
             println!("🔄 Running autoregressive generation...");
-            let generation_output = match generation_model.generate(&prompt_token_ids, &generation_config) {
-                Ok(output) => {
-                    println!("✅ Generation completed");
-                    output
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!("❌ Failed to generate text: {}", e));
-                }
-            };
+            let generation_output =
+                match generation_model.generate(&prompt_token_ids, &generation_config) {
+                    Ok(output) => {
+                        println!("✅ Generation completed");
+                        output
+                    }
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("❌ Failed to generate text: {}", e));
+                    }
+                };
 
             // Decode and print generated text
             println!("📤 Decoding generated tokens...");
-            let full_text = match tokenizer_convenience::decode_tokens(&tokenizer, &generation_output.token_ids) {
+            let full_text = match tokenizer_convenience::decode_tokens(
+                &tokenizer,
+                &generation_output.token_ids,
+            ) {
                 Ok(text) => {
                     println!("✅ Decoded full text");
                     text
                 }
                 Err(e) => {
-                    return Err(anyhow::anyhow!("❌ Failed to decode generated tokens: {}", e));
+                    return Err(anyhow::anyhow!(
+                        "❌ Failed to decode generated tokens: {}",
+                        e
+                    ));
                 }
             };
 
-            let generated_text = match tokenizer_convenience::decode_tokens(&tokenizer, &generation_output.generated_token_ids) {
+            let generated_text = match tokenizer_convenience::decode_tokens(
+                &tokenizer,
+                &generation_output.generated_token_ids,
+            ) {
                 Ok(text) => text,
-                Err(_) => "(failed to decode generated portion)".to_string()
+                Err(_) => "(failed to decode generated portion)".to_string(),
             };
 
             // Print results
             println!("\n📄 Generation Results:");
             println!("  Prompt:           \"{}\"", prompt);
             println!("  Prompt Tokens:    {}", prompt_token_ids.len());
-            println!("  Generated Tokens: {}", generation_output.generated_token_ids.len());
+            println!(
+                "  Generated Tokens: {}",
+                generation_output.generated_token_ids.len()
+            );
             println!("  Total Tokens:     {}", generation_output.token_ids.len());
             println!("\n📝 Full Text:");
             println!("{}", full_text);
-            if !generated_text.is_empty() && generated_text != "(failed to decode generated portion)" {
+            if !generated_text.is_empty()
+                && generated_text != "(failed to decode generated portion)"
+            {
                 println!("\n✨ Generated Portion:");
                 println!("{}", generated_text);
             }
@@ -813,7 +926,11 @@ fn main() -> anyhow::Result<()> {
                     ds
                 }
                 Err(e) => {
-                    return Err(anyhow::anyhow!("❌ Failed to load calibration corpus '{}': {}", corpus, e));
+                    return Err(anyhow::anyhow!(
+                        "❌ Failed to load calibration corpus '{}': {}",
+                        corpus,
+                        e
+                    ));
                 }
             };
 
@@ -848,44 +965,54 @@ fn main() -> anyhow::Result<()> {
             println!("💻 Using device: {:?}", device);
 
             // Create CalibrationSearch with the specified profile
-            println!("⚙️ Setting up calibration search with '{}' profile...", profile);
+            println!(
+                "⚙️ Setting up calibration search with '{}' profile...",
+                profile
+            );
             let device_info = format!("{:?}", device);
             let mut search = match profile.as_str() {
-                "rapid" => {
-                    match SearchFactory::create_rapid_search(device) {
-                        Ok(s) => {
-                            println!("✅ Created rapid calibration search (fast, limited exploration)");
-                            s
-                        }
-                        Err(e) => {
-                            return Err(anyhow::anyhow!("❌ Failed to create rapid search: {}", e));
-                        }
+                "rapid" => match SearchFactory::create_rapid_search(device) {
+                    Ok(s) => {
+                        println!("✅ Created rapid calibration search (fast, limited exploration)");
+                        s
                     }
-                }
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("❌ Failed to create rapid search: {}", e));
+                    }
+                },
                 "balanced" => {
                     match SearchFactory::create_focused_search(device, Some(4), Some(32)) {
                         Ok(s) => {
-                            println!("✅ Created balanced calibration search (moderate exploration)");
+                            println!(
+                                "✅ Created balanced calibration search (moderate exploration)"
+                            );
                             s
                         }
                         Err(e) => {
-                            return Err(anyhow::anyhow!("❌ Failed to create balanced search: {}", e));
+                            return Err(anyhow::anyhow!(
+                                "❌ Failed to create balanced search: {}",
+                                e
+                            ));
                         }
                     }
                 }
-                "thorough" => {
-                    match SearchFactory::create_exhaustive_search(device, Some(2000)) {
-                        Ok(s) => {
-                            println!("✅ Created thorough calibration search (extensive exploration)");
-                            s
-                        }
-                        Err(e) => {
-                            return Err(anyhow::anyhow!("❌ Failed to create thorough search: {}", e));
-                        }
+                "thorough" => match SearchFactory::create_exhaustive_search(device, Some(2000)) {
+                    Ok(s) => {
+                        println!("✅ Created thorough calibration search (extensive exploration)");
+                        s
                     }
-                }
+                    Err(e) => {
+                        return Err(anyhow::anyhow!(
+                            "❌ Failed to create thorough search: {}",
+                            e
+                        ));
+                    }
+                },
                 _ => {
-                    return Err(anyhow::anyhow!("❌ Unknown profile '{}'. Use: rapid, balanced, thorough", profile));
+                    return Err(anyhow::anyhow!(
+                        "❌ Unknown profile '{}'. Use: rapid, balanced, thorough",
+                        profile
+                    ));
                 }
             };
 
@@ -894,7 +1021,11 @@ fn main() -> anyhow::Result<()> {
             println!("🔄 Calibration pipeline setup complete!");
             println!("\n📊 Calibration Summary:");
             println!("  Model:             {}", model);
-            println!("  Corpus:            {} ({} samples)", corpus, dataset.samples.len());
+            println!(
+                "  Corpus:            {} ({} samples)",
+                corpus,
+                dataset.samples.len()
+            );
             println!("  Profile:           {}", profile);
             println!("  Device:            {:?}", device_info);
 
@@ -905,7 +1036,10 @@ fn main() -> anyhow::Result<()> {
             println!("   This demo shows successful pipeline setup without full execution.");
 
             // Create output directory for results
-            let output_dir = format!("./calibration_results_{}", chrono::Utc::now().format("%Y%m%d_%H%M%S"));
+            let output_dir = format!(
+                "./calibration_results_{}",
+                chrono::Utc::now().format("%Y%m%d_%H%M%S")
+            );
             println!("\n📁 Results would be saved to: {}", output_dir);
 
             // Create exporter to show export capability
@@ -914,7 +1048,10 @@ fn main() -> anyhow::Result<()> {
                     println!("✅ Profile exporter ready for results export");
                 }
                 Err(e) => {
-                    return Err(anyhow::anyhow!("❌ Failed to create profile exporter: {}", e));
+                    return Err(anyhow::anyhow!(
+                        "❌ Failed to create profile exporter: {}",
+                        e
+                    ));
                 }
             }
 
@@ -985,24 +1122,32 @@ fn main() -> anyhow::Result<()> {
                 ..Default::default()
             };
 
-            let autoencoder = match CalmAutoencoder::load(var_builder.clone(), autoencoder_config.clone()) {
-                Ok(ae) => {
-                    println!("✅ Created autoencoder");
-                    ae
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!("❌ Failed to create autoencoder: {}", e));
-                }
-            };
+            let autoencoder =
+                match CalmAutoencoder::load(var_builder.clone(), autoencoder_config.clone()) {
+                    Ok(ae) => {
+                        println!("✅ Created autoencoder");
+                        ae
+                    }
+                    Err(e) => {
+                        return Err(anyhow::anyhow!("❌ Failed to create autoencoder: {}", e));
+                    }
+                };
 
             // Create generation model
-            let generation_model = match CalmGenerationModel::load(var_builder, calm_config.clone(), autoencoder_config) {
+            let generation_model = match CalmGenerationModel::load(
+                var_builder,
+                calm_config.clone(),
+                autoencoder_config,
+            ) {
                 Ok(model) => {
                     println!("✅ Created generation model");
                     model
                 }
                 Err(e) => {
-                    return Err(anyhow::anyhow!("❌ Failed to create generation model: {}", e));
+                    return Err(anyhow::anyhow!(
+                        "❌ Failed to create generation model: {}",
+                        e
+                    ));
                 }
             };
 
@@ -1061,7 +1206,7 @@ fn main() -> anyhow::Result<()> {
             // Simulate KV cache comparison
             let _quant_profile = QuantProfile::default();
             let dense_cache_memory = baseline_memory_bytes + 1024 * 1024; // Simulate 1MB for dense
-            let turbo_cache_memory = baseline_memory_bytes + 256 * 1024;  // Simulate 256KB for compressed
+            let turbo_cache_memory = baseline_memory_bytes + 256 * 1024; // Simulate 256KB for compressed
 
             let compression_ratio = dense_cache_memory as f64 / turbo_cache_memory as f64;
 
@@ -1082,11 +1227,23 @@ fn main() -> anyhow::Result<()> {
             println!("  Generation Setup:  {:?}", gen_time);
 
             println!("\nMemory Usage Comparison:");
-            println!("  Baseline Memory:   {:.2} MB", baseline_memory_bytes as f64 / 1024.0 / 1024.0);
-            println!("  Dense KV Cache:    {:.2} MB", dense_cache_memory as f64 / 1024.0 / 1024.0);
-            println!("  TurboQuant Cache:  {:.2} MB", turbo_cache_memory as f64 / 1024.0 / 1024.0);
+            println!(
+                "  Baseline Memory:   {:.2} MB",
+                baseline_memory_bytes as f64 / 1024.0 / 1024.0
+            );
+            println!(
+                "  Dense KV Cache:    {:.2} MB",
+                dense_cache_memory as f64 / 1024.0 / 1024.0
+            );
+            println!(
+                "  TurboQuant Cache:  {:.2} MB",
+                turbo_cache_memory as f64 / 1024.0 / 1024.0
+            );
             println!("  Compression Ratio: {:.2}x", compression_ratio);
-            println!("  Memory Saved:      {:.2} MB", (dense_cache_memory - turbo_cache_memory) as f64 / 1024.0 / 1024.0);
+            println!(
+                "  Memory Saved:      {:.2} MB",
+                (dense_cache_memory - turbo_cache_memory) as f64 / 1024.0 / 1024.0
+            );
 
             println!("\nSample Input:");
             println!("  Text:              \"{}\"", sample_text);

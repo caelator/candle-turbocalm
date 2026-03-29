@@ -2,7 +2,11 @@ use anyhow::Result;
 use candle_core::Tensor;
 
 pub fn pack_bits(tensor: &Tensor, bits: u8) -> Result<Tensor> {
-    let flattened = tensor.flatten_all().map_err(anyhow::Error::from)?.to_vec1::<u8>().map_err(anyhow::Error::from)?;
+    let flattened = tensor
+        .flatten_all()
+        .map_err(anyhow::Error::from)?
+        .to_vec1::<u8>()
+        .map_err(anyhow::Error::from)?;
     let mut packed = Vec::new();
 
     if bits == 4 {
@@ -76,7 +80,8 @@ mod tests {
     fn test_pack_unpack_4bit() -> Result<()> {
         let device = Device::Cpu;
         let data: Vec<u8> = vec![5, 12, 0, 15, 3, 8];
-        let tensor = Tensor::from_vec(data.clone(), (2, 3), &device).map_err(anyhow::Error::from)?;
+        let tensor =
+            Tensor::from_vec(data.clone(), (2, 3), &device).map_err(anyhow::Error::from)?;
 
         let packed = pack_bits(&tensor, 4)?;
         assert_eq!(packed.dims(), &[3]);

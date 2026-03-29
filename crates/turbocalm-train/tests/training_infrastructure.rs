@@ -52,14 +52,21 @@ fn training_decreases_loss_and_round_trips_checkpoint() -> Result<()> {
 
     // With 10 epochs and lower lr, the best loss should beat the first
     let best = losses.iter().copied().fold(f32::INFINITY, f32::min);
-    assert!(best < losses[0], "expected best loss ({best}) to beat epoch 1 ({})", losses[0]);
+    assert!(
+        best < losses[0],
+        "expected best loss ({best}) to beat epoch 1 ({})",
+        losses[0]
+    );
     assert!(losses.iter().all(|l| l.is_finite()));
 
     let checkpoint_path = temp_root.join("checkpoint-v000001.safetensors");
     save_checkpoint(&trainer.varmap, &checkpoint_path, 1)?;
     let restored = load_checkpoint(&checkpoint_path)?;
 
-    assert_eq!(snapshot_all_vars(&trainer.varmap)?, snapshot_all_vars(&restored)?);
+    assert_eq!(
+        snapshot_all_vars(&trainer.varmap)?,
+        snapshot_all_vars(&restored)?
+    );
 
     std::fs::remove_file(checkpoint_path)?;
     std::fs::remove_dir_all(temp_root)?;

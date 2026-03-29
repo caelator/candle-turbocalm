@@ -86,7 +86,9 @@ impl TurboKvCache {
         }
         let dim = shape[rank - 1];
         let num_elements: usize = shape[0..rank - 1].iter().product();
-        let reshaped = tensor.reshape((num_elements, dim)).map_err(anyhow::Error::from)?;
+        let reshaped = tensor
+            .reshape((num_elements, dim))
+            .map_err(anyhow::Error::from)?;
         Ok((reshaped, shape))
     }
 
@@ -98,7 +100,9 @@ impl TurboKvCache {
         let mut new_shape = original_shape.to_vec();
         let len = new_shape.len();
         new_shape[len - 1] = new_last_dim;
-        Ok(tensor.reshape(new_shape.as_slice()).map_err(anyhow::Error::from)?)
+        Ok(tensor
+            .reshape(new_shape.as_slice())
+            .map_err(anyhow::Error::from)?)
     }
 
     fn compress_tensor(&mut self, tensor: &Tensor) -> Result<CompressedTensor> {
@@ -120,14 +124,20 @@ impl TurboKvCache {
         // Polar quantization
         let (quantized_flat, q_scale_flat) = self.polar_quantizer.quantize(&rotated)?;
         let quantized_shape = quantized_flat.dims().to_vec();
-        let packed_quantized =
-            pack_bits(&quantized_flat.to_dtype(DType::U8).map_err(anyhow::Error::from)?, self.profile.bit_width)?;
+        let packed_quantized = pack_bits(
+            &quantized_flat
+                .to_dtype(DType::U8)
+                .map_err(anyhow::Error::from)?,
+            self.profile.bit_width,
+        )?;
 
         // Compute residual
         let dequantized_flat = self
             .polar_quantizer
             .dequantize(&quantized_flat, &q_scale_flat)?;
-        let residual_flat = rotated.broadcast_sub(&dequantized_flat).map_err(anyhow::Error::from)?;
+        let residual_flat = rotated
+            .broadcast_sub(&dequantized_flat)
+            .map_err(anyhow::Error::from)?;
 
         // QJL projection
         let (signs_flat, r_scale_flat) = qjl.project(&residual_flat)?;
@@ -151,18 +161,23 @@ impl TurboKvCache {
     ) -> Result<Tensor> {
         // Reconstruct from polar
         let unpacked_quantized = unpack_bits(&comp.quantized, bit_width, &comp.quantized_shape)?
-            .to_dtype(comp.q_scale.dtype()).map_err(anyhow::Error::from)?;
+            .to_dtype(comp.q_scale.dtype())
+            .map_err(anyhow::Error::from)?;
         let dequantized_flat = polar_quantizer.dequantize(&unpacked_quantized, &comp.q_scale)?;
 
         // Reconstruct from QJL
         let recon_residual_flat = qjl.reconstruct(&comp.signs, &comp.r_scale)?;
 
         // Add residual
-        let reconstructed_rotated_flat = dequantized_flat.broadcast_add(&recon_residual_flat).map_err(anyhow::Error::from)?;
+        let reconstructed_rotated_flat = dequantized_flat
+            .broadcast_add(&recon_residual_flat)
+            .map_err(anyhow::Error::from)?;
 
         // Inverse rotation (rot is orthogonal, so rot.t() is inverse)
         let rot_t = rot.t().map_err(anyhow::Error::from)?;
-        let reconstructed_flat = reconstructed_rotated_flat.matmul(&rot_t).map_err(anyhow::Error::from)?;
+        let reconstructed_flat = reconstructed_rotated_flat
+            .matmul(&rot_t)
+            .map_err(anyhow::Error::from)?;
 
         // Unflatten
         let dim = comp.original_shape.last().unwrap();

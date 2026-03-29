@@ -17,5 +17,5 @@ pub use embedding::{EmbeddingMode, EmbeddingModel};
 pub use eval::{run_eval, EvalCorpus, EvalMetrics, EvalPair};
 pub use loss::{nt_xent_loss, DEFAULT_TEMPERATURE};
 pub use pairs::{Corpus as TrainingCorpus, CorpusMetadata, TrainingPair};
-pub use server::{serve, serve_with_listener, DEFAULT_MODEL_NAME};
+pub use server::{load_model_or_random, serve, serve_with_listener, DEFAULT_MODEL_NAME};
 pub use trainer::{Trainer, TrainingConfig, TrainingSummary};

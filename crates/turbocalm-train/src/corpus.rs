@@ -24,7 +24,11 @@ pub fn load_from_jsonl<P: AsRef<Path>>(path: P) -> Result<Vec<CorpusEntry>> {
     let mut entries = Vec::new();
     for (line_index, line) in reader.lines().enumerate() {
         let line = line.with_context(|| {
-            format!("failed to read line {} from {}", line_index + 1, path.display())
+            format!(
+                "failed to read line {} from {}",
+                line_index + 1,
+                path.display()
+            )
         })?;
         if line.trim().is_empty() {
             continue;

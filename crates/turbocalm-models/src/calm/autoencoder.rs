@@ -113,11 +113,14 @@ impl RmsNormLayer {
     fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
         // Use the slow (pure computation) path that works on all devices including Metal
         // candle_nn::ops::rms_norm uses CustomOp2 which lacks a Metal kernel
-        let hidden_size = hidden_states.dim(candle_core::D::Minus1)
+        let hidden_size = hidden_states
+            .dim(candle_core::D::Minus1)
             .map_err(|e| anyhow::anyhow!("RMSNorm dim error: {}", e))?;
         let variance = hidden_states
-            .sqr().map_err(|e| anyhow::anyhow!("sqr: {}", e))?
-            .mean_keepdim(candle_core::D::Minus1).map_err(|e| anyhow::anyhow!("mean: {}", e))?;
+            .sqr()
+            .map_err(|e| anyhow::anyhow!("sqr: {}", e))?
+            .mean_keepdim(candle_core::D::Minus1)
+            .map_err(|e| anyhow::anyhow!("mean: {}", e))?;
         let eps_tensor = candle_core::Tensor::new(&[self.eps as f32], hidden_states.device())
             .map_err(|e| anyhow::anyhow!("eps tensor: {}", e))?;
         let var_shape = variance.shape().clone();
@@ -233,7 +236,12 @@ impl AutoencoderLayer {
         let residual = hidden_states;
         let hidden_states = match self.layernorm.forward(hidden_states) {
             Ok(h) => h,
-            Err(e) => anyhow::bail!("layernorm failed (input {:?}, weight {:?}): {:#}", hidden_states.shape(), self.layernorm.weight.shape(), e),
+            Err(e) => anyhow::bail!(
+                "layernorm failed (input {:?}, weight {:?}): {:#}",
+                hidden_states.shape(),
+                self.layernorm.weight.shape(),
+                e
+            ),
         };
         let hidden_states = match self.mlp.forward(&hidden_states) {
             Ok(h) => h,
@@ -330,7 +338,14 @@ impl CalmAutoencoderEncoder {
                 let layer_idx = stage * self.num_stage_layers + layer_offset;
                 hidden_states = match self.encoder_layers[layer_idx].forward(&hidden_states) {
                     Ok(h) => h,
-                    Err(e) => anyhow::bail!("encoder_layer[{}] stage={} offset={} input={:?}: {:#}", layer_idx, stage, layer_offset, hidden_states.shape(), e),
+                    Err(e) => anyhow::bail!(
+                        "encoder_layer[{}] stage={} offset={} input={:?}: {:#}",
+                        layer_idx,
+                        stage,
+                        layer_offset,
+                        hidden_states.shape(),
+                        e
+                    ),
                 };
             }
 
@@ -345,12 +360,21 @@ impl CalmAutoencoderEncoder {
                 hidden_states = self
                     .squeeze_layer
                     .forward(&hidden_states)
-                    .with_context(|| format!("failed to run squeeze_layer, input shape: {:?}", hidden_states.shape()))?;
+                    .with_context(|| {
+                        format!(
+                            "failed to run squeeze_layer, input shape: {:?}",
+                            hidden_states.shape()
+                        )
+                    })?;
             }
         }
 
-        let hidden_states = self.norm.forward(&hidden_states)
-            .with_context(|| format!("failed at encoder final norm, input shape: {:?}", hidden_states.shape()))?;
+        let hidden_states = self.norm.forward(&hidden_states).with_context(|| {
+            format!(
+                "failed at encoder final norm, input shape: {:?}",
+                hidden_states.shape()
+            )
+        })?;
         let latent_states = self
             .hidden_to_latent
             .forward(&hidden_states)
@@ -488,7 +512,8 @@ impl CalmAutoencoder {
         } else {
             // Separate embeddings for encoder and decoder
             let encoder_embedding_weight = Self::load_encoder_embedding_weight(&vb, &config)?;
-            let encoder = CalmAutoencoderEncoder::load(vb.pp("encoder"), &config, encoder_embedding_weight)?;
+            let encoder =
+                CalmAutoencoderEncoder::load(vb.pp("encoder"), &config, encoder_embedding_weight)?;
 
             let decoder_embedding_weight = Self::load_decoder_embedding_weight(&vb, &config)?;
             let lm_head = Linear::new(decoder_embedding_weight, None);
@@ -521,7 +546,10 @@ impl CalmAutoencoder {
         }
     }
 
-    fn load_encoder_embedding_weight(vb: &VarBuilder, config: &CalmAutoencoderConfig) -> Result<Tensor> {
+    fn load_encoder_embedding_weight(
+        vb: &VarBuilder,
+        config: &CalmAutoencoderConfig,
+    ) -> Result<Tensor> {
         let shape = (config.vocab_size, config.hidden_size);
 
         // Try various common embedding tensor patterns
@@ -558,7 +586,10 @@ impl CalmAutoencoder {
         }
     }
 
-    fn load_decoder_embedding_weight(vb: &VarBuilder, config: &CalmAutoencoderConfig) -> Result<Tensor> {
+    fn load_decoder_embedding_weight(
+        vb: &VarBuilder,
+        config: &CalmAutoencoderConfig,
+    ) -> Result<Tensor> {
         let shape = (config.vocab_size, config.hidden_size);
         if vb.contains_tensor("decoder.lm_head.weight") {
             vb.pp("decoder")

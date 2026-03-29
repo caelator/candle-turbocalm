@@ -154,7 +154,9 @@ fn batch_sequence_len(texts: &[String], config: &CalmAutoencoderConfig) -> Resul
 }
 
 fn encode_text(text: &str, config: &CalmAutoencoderConfig, seq_len: usize) -> Vec<u32> {
-    let usable_vocab = (config.vocab_size as u32).saturating_sub(TOKEN_OFFSET).max(1);
+    let usable_vocab = (config.vocab_size as u32)
+        .saturating_sub(TOKEN_OFFSET)
+        .max(1);
     let pad_token = config.pad_token_id.unwrap_or_default();
     let budget = seq_len.saturating_sub(2);
 
@@ -194,9 +196,7 @@ fn stable_token_hash(token: &str) -> u32 {
 }
 
 fn tensor_to_rows(tensor: &Tensor) -> Result<Vec<Vec<f32>>> {
-    let (rows, dims) = tensor
-        .dims2()
-        .context("expected rank-2 embedding tensor")?;
+    let (rows, dims) = tensor.dims2().context("expected rank-2 embedding tensor")?;
     let values = tensor
         .to_device(&Device::Cpu)
         .context("failed to move embeddings to CPU")?

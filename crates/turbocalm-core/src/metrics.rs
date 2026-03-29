@@ -252,7 +252,7 @@ impl MemoryReporter {
 
         // Approach 1: Use ps with RSS
         if let Ok(output) = Command::new("ps")
-            .args(&["-o", "rss=", "-p", &pid])  // Use rss= to get only the value without header
+            .args(&["-o", "rss=", "-p", &pid]) // Use rss= to get only the value without header
             .output()
         {
             if let Ok(output_str) = String::from_utf8(output.stdout) {

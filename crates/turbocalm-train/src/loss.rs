@@ -72,14 +72,10 @@ pub fn nt_xent_loss(anchor: &Tensor, positive: &Tensor, temperature: f64) -> Res
         )
         .context("failed to mask self-similarity logits")?;
 
-    let targets = Tensor::from_vec(
-        positive_pair_indices(batch_size),
-        total,
-        device,
-    )
-    .context("failed to create NT-Xent targets")?
-    .to_dtype(DType::U32)
-    .context("failed to cast NT-Xent targets")?;
+    let targets = Tensor::from_vec(positive_pair_indices(batch_size), total, device)
+        .context("failed to create NT-Xent targets")?
+        .to_dtype(DType::U32)
+        .context("failed to cast NT-Xent targets")?;
 
     candle_nn::loss::cross_entropy(&masked_logits, &targets)
         .context("failed to compute NT-Xent cross entropy")
@@ -131,7 +127,11 @@ mod tests {
         let anchor = Var::from_vec(vec![1f32, 0., 0., 1.], (2, 2), &device)?;
         let positive = Var::from_vec(vec![0.9f32, 0.1, 0.1, 0.9], (2, 2), &device)?;
 
-        let loss = nt_xent_loss(anchor.as_tensor(), positive.as_tensor(), DEFAULT_TEMPERATURE)?;
+        let loss = nt_xent_loss(
+            anchor.as_tensor(),
+            positive.as_tensor(),
+            DEFAULT_TEMPERATURE,
+        )?;
         let grads = loss.backward()?;
 
         assert!(grads.get(anchor.as_tensor()).is_some());

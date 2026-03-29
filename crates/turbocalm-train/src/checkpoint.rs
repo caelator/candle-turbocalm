@@ -78,12 +78,8 @@ pub fn save_checkpoint<P: AsRef<Path>>(
         .with_context(|| format!("failed to save checkpoint to {}", temp_path.display()))?;
     load_checkpoint(&temp_path)
         .with_context(|| format!("failed to verify checkpoint {}", temp_path.display()))?;
-    fs::rename(&temp_path, path).with_context(|| {
-        format!(
-            "failed to atomically install checkpoint {}",
-            path.display()
-        )
-    })?;
+    fs::rename(&temp_path, path)
+        .with_context(|| format!("failed to atomically install checkpoint {}", path.display()))?;
 
     if let Some(parent) = path.parent() {
         let latest_path = latest_checkpoint_path_in_dir(parent);
@@ -99,7 +95,10 @@ pub fn load_checkpoint<P: AsRef<Path>>(path: P) -> Result<VarMap> {
     let varmap = VarMap::new();
     let mut data = varmap.data().lock().unwrap();
     for (name, tensor) in tensors {
-        data.insert(name, Var::from_tensor(&tensor).context("failed to restore variable")?);
+        data.insert(
+            name,
+            Var::from_tensor(&tensor).context("failed to restore variable")?,
+        );
     }
     drop(data);
     Ok(varmap)
@@ -145,7 +144,9 @@ pub fn save_checkpoint_config<P: AsRef<Path>>(
     Ok(config_path)
 }
 
-pub fn load_checkpoint_config<P: AsRef<Path>>(checkpoint_path: P) -> Result<Option<CalmAutoencoderConfig>> {
+pub fn load_checkpoint_config<P: AsRef<Path>>(
+    checkpoint_path: P,
+) -> Result<Option<CalmAutoencoderConfig>> {
     let checkpoint_path = checkpoint_path.as_ref();
     let candidate_paths = checkpoint_config_candidates(checkpoint_path);
     for candidate in candidate_paths {
@@ -169,15 +170,14 @@ fn checkpoint_info(path: PathBuf, version: u64) -> Result<CheckpointInfo> {
         version,
         path,
         size_bytes: metadata.len(),
-        modified_unix_secs: metadata
-            .modified()
-            .ok()
-            .and_then(system_time_to_unix_secs),
+        modified_unix_secs: metadata.modified().ok().and_then(system_time_to_unix_secs),
     })
 }
 
 fn system_time_to_unix_secs(time: SystemTime) -> Option<u64> {
-    time.duration_since(UNIX_EPOCH).ok().map(|duration| duration.as_secs())
+    time.duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
 }
 
 fn checkpoint_file_name(version: u64) -> String {
@@ -231,7 +231,8 @@ fn save_config_atomically(config: &CalmAutoencoderConfig, path: &Path) -> Result
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
     let temp_path = temp_path_for(path);
-    let raw = serde_json::to_string_pretty(config).context("failed to serialize checkpoint config")?;
+    let raw =
+        serde_json::to_string_pretty(config).context("failed to serialize checkpoint config")?;
     fs::write(&temp_path, raw.as_bytes())
         .with_context(|| format!("failed to write checkpoint config {}", temp_path.display()))?;
     let verified = fs::read_to_string(&temp_path)

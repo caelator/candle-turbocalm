@@ -119,7 +119,8 @@ impl ObjectiveFunction {
         let mut quantized_memory = 0usize;
 
         // Create quantizer with specified scale mode
-        let quantizer = PolarQuantizer::new_with_scale_mode(profile.bit_width, profile.scale_mode.clone());
+        let quantizer =
+            PolarQuantizer::new_with_scale_mode(profile.bit_width, profile.scale_mode.clone());
 
         for trace in &dataset.kv_traces {
             // Generate representative key and value tensors from trace
@@ -127,13 +128,13 @@ impl ObjectiveFunction {
                 0.0,
                 trace.key_stats.std_dev as f32,
                 (trace.seq_len, trace.num_heads * trace.head_dim),
-                device
+                device,
             )?;
             let value_tensor = Tensor::randn(
                 0.0,
                 trace.value_stats.std_dev as f32,
                 (trace.seq_len, trace.num_heads * trace.head_dim),
-                device
+                device,
             )?;
 
             original_tensors.push(key_tensor.clone());
@@ -164,7 +165,10 @@ impl ObjectiveFunction {
             quantized_memory += value_quantized_size + value_scale_size;
 
             // Apply QJL projection if threshold is set and dimension is reasonable
-            if profile.qjl_threshold > 0.0 && profile.qjl_dim > 0 && profile.qjl_dim < trace.num_heads * trace.head_dim {
+            if profile.qjl_threshold > 0.0
+                && profile.qjl_dim > 0
+                && profile.qjl_dim < trace.num_heads * trace.head_dim
+            {
                 // Apply QJL to residual (difference between original and dequantized)
                 let key_residual = (&key_tensor - &key_dequantized)?;
                 let value_residual = (&value_tensor - &value_dequantized)?;
@@ -174,14 +178,14 @@ impl ObjectiveFunction {
                     trace.num_heads * trace.head_dim,
                     profile.rotation_seed,
                     profile.qjl_threshold,
-                    device
+                    device,
                 )?;
                 let value_qjl = QjlProjector::new(
                     profile.qjl_dim,
                     trace.num_heads * trace.head_dim,
                     profile.rotation_seed + 1,
                     profile.qjl_threshold,
-                    device
+                    device,
                 )?;
 
                 let (key_signs, key_qjl_scale) = key_qjl.project(&key_residual)?;
@@ -198,7 +202,8 @@ impl ObjectiveFunction {
 
                 // Add QJL memory overhead (signs + scales)
                 let qjl_signs_size = key_signs.elem_count() + value_signs.elem_count(); // 1 bit per sign, approximated as 1 byte
-                let qjl_scale_size = (key_qjl_scale.elem_count() + value_qjl_scale.elem_count()) * 4;
+                let qjl_scale_size =
+                    (key_qjl_scale.elem_count() + value_qjl_scale.elem_count()) * 4;
                 quantized_memory += qjl_signs_size + qjl_scale_size;
             }
         }
@@ -236,7 +241,8 @@ impl ObjectiveFunction {
         let memory_gain = (original_memory - quantized_memory) as f64 / original_memory as f64;
         let delta_brier_lm = quantized_brier_lm - reference.baseline_brier_lm;
         let cosine_penalty = 1.0 - avg_cosine_similarity as f64;
-        let latency_penalty = (quantized_latency_ms - reference.baseline_latency_ms) / reference.baseline_latency_ms;
+        let latency_penalty =
+            (quantized_latency_ms - reference.baseline_latency_ms) / reference.baseline_latency_ms;
 
         let fitness = FitnessMetrics {
             memory_gain,
@@ -336,10 +342,7 @@ impl ObjectiveFunction {
     }
 
     /// Estimate cosine similarity between original and quantized activations (synthetic)
-    fn estimate_cosine_similarity_synthetic(
-        &self,
-        profile: &QuantProfile,
-    ) -> Result<f64> {
+    fn estimate_cosine_similarity_synthetic(&self, profile: &QuantProfile) -> Result<f64> {
         // Real quantize→dequantize cosine similarity (as requested in Phase 5)
         // Use actual quantization pipeline instead of hand-tuned similarity proxy
         let base_similarity = match profile.bit_width {
@@ -471,10 +474,10 @@ fn simulate_brier_score(_dataset: &ProcessedDataset, bits: u8) -> Result<f64> {
 
     // Precision-dependent quality degradation based on quantization theory
     let precision_factor = match bits {
-        2 => 0.08,  // 8% degradation for aggressive 2-bit quantization
-        3 => 0.04,  // 4% degradation for 3-bit quantization
-        4 => 0.015, // 1.5% degradation for 4-bit quantization
-        8 => 0.001, // Minimal degradation for 8-bit
+        2 => 0.08,                              // 8% degradation for aggressive 2-bit quantization
+        3 => 0.04,                              // 4% degradation for 3-bit quantization
+        4 => 0.015,                             // 1.5% degradation for 4-bit quantization
+        8 => 0.001,                             // Minimal degradation for 8-bit
         _ => (32.0 / bits as f64 - 1.0) * 0.02, // Linear approximation for other bit widths
     };
 
@@ -515,7 +518,9 @@ fn simulate_inference_latency(
         let quantized = normalized.broadcast_mul(&max_quant_tensor)?.round()?;
 
         // Dequantize: restore original scale
-        let _dequantized = quantized.broadcast_div(&max_quant_tensor)?.broadcast_mul(&scale_tensor)?;
+        let _dequantized = quantized
+            .broadcast_div(&max_quant_tensor)?
+            .broadcast_mul(&scale_tensor)?;
 
         total_quant_time += quant_start.elapsed().as_secs_f64() * 1000.0;
     }
@@ -581,7 +586,10 @@ mod tests {
             bit_width: 4,
             qjl_dim: 32,
             rotation_seed: 42,
-            qjl_threshold: 0.0001, scale_mode: "per_token".to_string(), clipping_percentile: 0.95, scale_multiplier: 1.0,
+            qjl_threshold: 0.0001,
+            scale_mode: "per_token".to_string(),
+            clipping_percentile: 0.95,
+            scale_multiplier: 1.0,
         };
 
         let (fitness, objective_value) = objective.evaluate(&profile, &dataset, &device)?;
@@ -604,14 +612,20 @@ mod tests {
             bit_width: 2,
             qjl_dim: 16,
             rotation_seed: 42,
-            qjl_threshold: 0.0001, scale_mode: "per_token".to_string(), clipping_percentile: 0.95, scale_multiplier: 1.0,
+            qjl_threshold: 0.0001,
+            scale_mode: "per_token".to_string(),
+            clipping_percentile: 0.95,
+            scale_multiplier: 1.0,
         };
 
         let profile_4bit = QuantProfile {
             bit_width: 4,
             qjl_dim: 64,
             rotation_seed: 42,
-            qjl_threshold: 0.0001, scale_mode: "per_token".to_string(), clipping_percentile: 0.95, scale_multiplier: 1.0,
+            qjl_threshold: 0.0001,
+            scale_mode: "per_token".to_string(),
+            clipping_percentile: 0.95,
+            scale_multiplier: 1.0,
         };
 
         let degradation_2bit = objective.estimate_quality_degradation(&profile_2bit);

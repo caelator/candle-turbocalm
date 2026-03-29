@@ -113,12 +113,7 @@ pub fn run_eval(model: &EmbeddingModel, corpus: &EvalCorpus) -> Result<EvalMetri
             })
             .collect::<Vec<_>>();
 
-        ranked.sort_by(|left, right| {
-            right
-                .1
-                .partial_cmp(&left.1)
-                .unwrap_or(Ordering::Equal)
-        });
+        ranked.sort_by(|left, right| right.1.partial_cmp(&left.1).unwrap_or(Ordering::Equal));
 
         let top_k = ranked.iter().take(5);
         let hits = top_k

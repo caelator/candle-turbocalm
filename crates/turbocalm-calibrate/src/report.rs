@@ -719,7 +719,10 @@ mod tests {
                 bit_width: 4,
                 qjl_dim: 32,
                 rotation_seed: 42,
-                qjl_threshold: 0.0001, scale_mode: "per_token".to_string(), clipping_percentile: 0.95, scale_multiplier: 1.0,
+                qjl_threshold: 0.0001,
+                scale_mode: "per_token".to_string(),
+                clipping_percentile: 0.95,
+                scale_multiplier: 1.0,
             },
             fitness: FitnessMetrics {
                 memory_gain: 0.6,
