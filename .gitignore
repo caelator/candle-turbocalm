@@ -4,3 +4,4 @@
 .DS_Store
 /evolved/*.safetensors
 /calibration/*.jsonl
+.gitnexus
