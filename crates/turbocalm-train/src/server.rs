@@ -18,12 +18,50 @@ use tokio::net::TcpListener;
 use turbocalm_models::CalmAutoencoderConfig;
 
 use crate::embedding::{token_count_for_text, EmbeddingMode, EmbeddingModel};
+use crate::online::OnlineLearner;
 
 pub const DEFAULT_MODEL_NAME: &str = "turbocalm-local";
+pub const DEFAULT_ONLINE_LEARN_PATH: &str = "/v1/online-learn";
+
+#[derive(Clone)]
+pub enum ModelBackend {
+    Static(Arc<EmbeddingModel>),
+    Online(Arc<OnlineLearner>),
+}
+
+impl ModelBackend {
+    fn config(&self) -> CalmAutoencoderConfig {
+        match self {
+            Self::Static(model) => model.config().clone(),
+            Self::Online(learner) => learner.model_config(),
+        }
+    }
+
+    fn embed_texts_pooled(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        match self {
+            Self::Static(model) => model.embed_texts_pooled(texts),
+            Self::Online(learner) => learner.embed_texts_pooled(texts),
+        }
+    }
+
+    fn embed_texts_chunked(&self, texts: &[String]) -> Result<Vec<Vec<Vec<f32>>>> {
+        match self {
+            Self::Static(model) => model.embed_texts_chunked(texts),
+            Self::Online(learner) => learner.embed_texts_chunked(texts),
+        }
+    }
+
+    fn online_learner(&self) -> Option<&Arc<OnlineLearner>> {
+        match self {
+            Self::Online(learner) => Some(learner),
+            Self::Static(_) => None,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct ServerState {
-    pub model: Arc<EmbeddingModel>,
+    pub model: ModelBackend,
     pub mode: EmbeddingMode,
     pub model_name: Arc<str>,
 }
@@ -31,7 +69,15 @@ pub struct ServerState {
 impl ServerState {
     pub fn new(model: EmbeddingModel, mode: EmbeddingMode) -> Self {
         Self {
-            model: Arc::new(model),
+            model: ModelBackend::Static(Arc::new(model)),
+            mode,
+            model_name: Arc::from(DEFAULT_MODEL_NAME),
+        }
+    }
+
+    pub fn with_online_learner(learner: OnlineLearner, mode: EmbeddingMode) -> Self {
+        Self {
+            model: ModelBackend::Online(Arc::new(learner)),
             mode,
             model_name: Arc::from(DEFAULT_MODEL_NAME),
         }
@@ -84,6 +130,23 @@ pub enum EmbeddingPayload {
 pub struct Usage {
     pub prompt_tokens: usize,
     pub total_tokens: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct OnlineLearnRequest {
+    pub text: String,
+    pub category: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct OnlineLearnResponse {
+    pub buffered: usize,
+    pub threshold: usize,
+    pub trained: bool,
+    pub pair_count: usize,
+    pub epochs_ran: usize,
+    pub checkpoint_path: Option<String>,
+    pub checkpoint_version: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -147,6 +210,9 @@ pub async fn serve(state: ServerState, port: u16) -> Result<()> {
         .local_addr()
         .context("failed to read embedding server socket addr")?;
     println!("embedding server listening on http://{addr}/v1/embeddings");
+    if state.model.online_learner().is_some() {
+        println!("online learner listening on http://{addr}{DEFAULT_ONLINE_LEARN_PATH}");
+    }
     serve_with_listener(listener, state, async {})
         .await
         .context("failed to run embedding server")
@@ -162,13 +228,8 @@ async fn handle_request(
             "only POST is supported".to_string(),
         ));
     }
-    if request.uri().path() != "/v1/embeddings" {
-        return Ok(error_response(
-            StatusCode::NOT_FOUND,
-            "not found".to_string(),
-        ));
-    }
 
+    let path = request.uri().path().to_string();
     let body = match request.into_body().collect().await {
         Ok(body) => body.to_bytes(),
         Err(error) => {
@@ -179,23 +240,55 @@ async fn handle_request(
         }
     };
 
-    let request = match serde_json::from_slice::<EmbeddingRequest>(&body) {
-        Ok(request) => request,
-        Err(error) => {
-            return Ok(error_response(
-                StatusCode::BAD_REQUEST,
-                format!("failed to parse request body: {error}"),
-            ));
-        }
-    };
+    match path.as_str() {
+        "/v1/embeddings" => {
+            let request = match serde_json::from_slice::<EmbeddingRequest>(&body) {
+                Ok(request) => request,
+                Err(error) => {
+                    return Ok(error_response(
+                        StatusCode::BAD_REQUEST,
+                        format!("failed to parse request body: {error}"),
+                    ));
+                }
+            };
 
-    match build_response(state, request) {
-        Ok(response) => Ok(json_response(StatusCode::OK, &response)),
-        Err((status, error)) => Ok(error_response(status, error)),
+            match build_embedding_response(state, request) {
+                Ok(response) => Ok(json_response(StatusCode::OK, &response)),
+                Err((status, error)) => Ok(error_response(status, error)),
+            }
+        }
+        DEFAULT_ONLINE_LEARN_PATH => {
+            let request = match serde_json::from_slice::<OnlineLearnRequest>(&body) {
+                Ok(request) => request,
+                Err(error) => {
+                    return Ok(error_response(
+                        StatusCode::BAD_REQUEST,
+                        format!("failed to parse request body: {error}"),
+                    ));
+                }
+            };
+
+            match build_online_response(state, request) {
+                Ok(response) => Ok(json_response(StatusCode::OK, &response)),
+                Err((status, error)) => Ok(error_response(status, error)),
+            }
+        }
+        _ => Ok(error_response(
+            StatusCode::NOT_FOUND,
+            "not found".to_string(),
+        )),
     }
 }
 
-fn build_response(
+#[doc(hidden)]
+pub async fn handle_request_for_tests(
+    request: Request<Incoming>,
+    state: ServerState,
+) -> Result<Response<Full<Bytes>>, Infallible> {
+    handle_request(request, state).await
+}
+
+fn build_embedding_response(
     state: ServerState,
     request: EmbeddingRequest,
 ) -> std::result::Result<EmbeddingResponse, (StatusCode, String)> {
@@ -217,9 +310,10 @@ fn build_response(
         ));
     }
 
+    let config = state.model.config();
     let prompt_tokens = texts
         .iter()
-        .map(|text| token_count_for_text(text, state.model.config()))
+        .map(|text| token_count_for_text(text, &config))
         .sum();
 
     let data = match state.mode {
@@ -263,6 +357,38 @@ fn build_response(
     })
 }
 
+fn build_online_response(
+    state: ServerState,
+    request: OnlineLearnRequest,
+) -> std::result::Result<OnlineLearnResponse, (StatusCode, String)> {
+    let learner = state.model.online_learner().ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            "online learning is not enabled for this server".to_string(),
+        )
+    })?;
+
+    let result = learner
+        .add_text(&request.text, &request.category)
+        .map_err(|error| (StatusCode::BAD_REQUEST, format!("{error:#}")))?;
+
+    Ok(OnlineLearnResponse {
+        buffered: result.buffered,
+        threshold: result.threshold,
+        trained: result.trained,
+        pair_count: result.pair_count,
+        epochs_ran: result.epochs_ran,
+        checkpoint_path: result
+            .checkpoint
+            .as_ref()
+            .map(|checkpoint| checkpoint.path.display().to_string()),
+        checkpoint_version: result
+            .checkpoint
+            .as_ref()
+            .map(|checkpoint| checkpoint.version),
+    })
+}
+
 fn error_response(status: StatusCode, error: String) -> Response<Full<Bytes>> {
     json_response(status, &ErrorResponse { error })
 }
@@ -293,6 +419,7 @@ pub fn resolve_mode(pooled: bool, chunked: bool) -> Result<EmbeddingMode> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{OnlineLearningConfig, TrainingConfig};
     use candle_core::Device;
     use http_body_util::Full;
     use hyper::client::conn::http1::handshake;
@@ -348,6 +475,73 @@ mod tests {
         drop(sender);
         client.await??;
         server.await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn online_endpoint_accepts_training_examples() -> Result<()> {
+        let checkpoint_dir = std::env::temp_dir().join(format!(
+            "turbocalm-train-server-online-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&checkpoint_dir)?;
+        let learner = OnlineLearner::new(
+            CalmAutoencoderConfig {
+                vocab_size: 256,
+                hidden_size: 16,
+                intermediate_size: 32,
+                latent_size: 8,
+                num_encoder_layers: 2,
+                num_decoder_layers: 2,
+                patch_size: 4,
+                tie_word_embeddings: true,
+                ..Default::default()
+            },
+            TrainingConfig {
+                checkpoint_dir: checkpoint_dir.clone(),
+                min_corpus_size: 1,
+                max_epochs: 3,
+                eval_interval: 1,
+                patience: 3,
+                ..TrainingConfig::default()
+            },
+            Device::Cpu,
+            OnlineLearningConfig {
+                buffer_size: 2,
+                mini_epochs: 1,
+            },
+        )?;
+        let state = ServerState::with_online_learner(learner, EmbeddingMode::Pooled);
+
+        let (client_io, server_io) = duplex(1 << 16);
+        let server_state = state.clone();
+        let server = tokio::spawn(async move {
+            let service = service_fn(move |request| handle_request(request, server_state.clone()));
+            http1::Builder::new()
+                .serve_connection(TokioIo::new(server_io), service)
+                .await
+        });
+
+        let (mut sender, connection) = handshake(TokioIo::new(client_io)).await?;
+        let client = tokio::spawn(async move { connection.await });
+
+        for text in ["breathing one", "breathing two"] {
+            let request = Request::builder()
+                .method(Method::POST)
+                .uri(DEFAULT_ONLINE_LEARN_PATH)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Full::new(Bytes::from(serde_json::to_vec(&json!({
+                    "text": text,
+                    "category": "breathing",
+                }))?)))?;
+            let response = sender.send_request(request).await?;
+            assert_eq!(response.status(), StatusCode::OK);
+        }
+
+        drop(sender);
+        client.await??;
+        server.await??;
+        let _ = std::fs::remove_dir_all(checkpoint_dir);
         Ok(())
     }
 }

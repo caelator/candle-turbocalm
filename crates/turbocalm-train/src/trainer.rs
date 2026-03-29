@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use candle_core::{backprop::GradStore, DType, Device, Tensor, Var};
@@ -99,8 +99,30 @@ impl Trainer {
         })
     }
 
+    pub fn from_checkpoint<P: AsRef<Path>>(
+        checkpoint_path: P,
+        model_config: CalmAutoencoderConfig,
+        config: TrainingConfig,
+        device: Device,
+    ) -> Result<Self> {
+        let mut trainer = Self::new(model_config, config, device)?;
+        trainer.load_checkpoint(checkpoint_path)?;
+        Ok(trainer)
+    }
+
     pub fn config(&self) -> &TrainingConfig {
         &self.config
+    }
+
+    pub fn model_config(&self) -> &CalmAutoencoderConfig {
+        self.model.config()
+    }
+
+    pub fn load_checkpoint<P: AsRef<Path>>(&mut self, checkpoint_path: P) -> Result<()> {
+        let checkpoint_path = checkpoint_path.as_ref();
+        self.varmap
+            .load(checkpoint_path)
+            .with_context(|| format!("failed to load checkpoint {}", checkpoint_path.display()))
     }
 
     pub fn train_epoch(&mut self, corpus: &Corpus) -> Result<f32> {
@@ -174,6 +196,42 @@ impl Trainer {
     }
 
     pub fn train(&mut self, corpus: &Corpus) -> Result<TrainingSummary> {
+        self.train_inner(corpus, self.config.max_epochs, self.config.patience)
+    }
+
+    pub fn train_with_epoch_limit(
+        &mut self,
+        corpus: &Corpus,
+        max_epochs: usize,
+    ) -> Result<TrainingSummary> {
+        let patience = self.config.patience.min(max_epochs.max(1));
+        self.train_inner(corpus, max_epochs, patience)
+    }
+
+    pub fn embed_texts_pooled(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        let input_ids = self.encode_text_batch(texts)?;
+        let embeddings = self
+            .model
+            .encode_pooled(&input_ids)
+            .context("failed to encode pooled embeddings")?;
+        tensor_to_rows(&embeddings)
+    }
+
+    pub fn embed_texts_chunked(&self, texts: &[String]) -> Result<Vec<Vec<Vec<f32>>>> {
+        let input_ids = self.encode_text_batch(texts)?;
+        let embeddings = self
+            .model
+            .encode_chunked(&input_ids)
+            .context("failed to encode chunked embeddings")?;
+        tensor_to_chunks(&embeddings)
+    }
+
+    fn train_inner(
+        &mut self,
+        corpus: &Corpus,
+        max_epochs: usize,
+        patience: usize,
+    ) -> Result<TrainingSummary> {
         if corpus.pairs.len() < self.config.min_corpus_size {
             bail!(
                 "corpus too small for training: {} pairs < minimum {}",
@@ -181,23 +239,25 @@ impl Trainer {
                 self.config.min_corpus_size
             )
         }
+        if max_epochs == 0 {
+            bail!("max_epochs must be greater than zero")
+        }
 
         let version = next_checkpoint_version_in_dir(&self.config.checkpoint_dir)?;
         let checkpoint_path = checkpoint_path_in_dir(&self.config.checkpoint_dir, version)?;
         let mut best_checkpoint = None;
         let mut best_loss = f32::INFINITY;
-        let mut epoch_losses = Vec::with_capacity(self.config.max_epochs);
+        let mut epoch_losses = Vec::with_capacity(max_epochs);
         let mut plateau_count = 0usize;
         let mut stopped_early = false;
 
-        for epoch in 1..=self.config.max_epochs {
+        for epoch in 1..=max_epochs {
             let epoch_loss = self.train_epoch(corpus)?;
             println!("epoch {epoch} average_loss={epoch_loss:.6}");
             epoch_losses.push(epoch_loss);
 
-            let should_evaluate = epoch == 1
-                || epoch == self.config.max_epochs
-                || epoch % self.config.eval_interval == 0;
+            let should_evaluate =
+                epoch == 1 || epoch == max_epochs || epoch % self.config.eval_interval == 0;
             if !should_evaluate {
                 continue;
             }
@@ -223,7 +283,7 @@ impl Trainer {
                 best_checkpoint = Some(checkpoint);
             } else {
                 plateau_count += 1;
-                if plateau_count >= self.config.patience {
+                if plateau_count >= patience {
                     stopped_early = true;
                     break;
                 }
@@ -312,4 +372,47 @@ fn scalar_f32(tensor: &Tensor) -> Result<f32> {
         .context("failed to copy scalar tensor to CPU")?
         .to_scalar::<f32>()
         .context("failed to read scalar tensor")
+}
+
+fn tensor_to_rows(tensor: &Tensor) -> Result<Vec<Vec<f32>>> {
+    let (rows, dims) = tensor.dims2().context("expected rank-2 embedding tensor")?;
+    let values = tensor
+        .to_device(&Device::Cpu)
+        .context("failed to move embeddings to CPU")?
+        .flatten_all()
+        .context("failed to flatten pooled embeddings")?
+        .to_vec1::<f32>()
+        .context("failed to extract pooled embedding values")?;
+
+    Ok(values
+        .chunks(dims)
+        .take(rows)
+        .map(|chunk| chunk.to_vec())
+        .collect())
+}
+
+fn tensor_to_chunks(tensor: &Tensor) -> Result<Vec<Vec<Vec<f32>>>> {
+    let (batch, patches, dims) = tensor
+        .dims3()
+        .context("expected rank-3 chunked embedding tensor")?;
+    let values = tensor
+        .to_device(&Device::Cpu)
+        .context("failed to move chunked embeddings to CPU")?
+        .flatten_all()
+        .context("failed to flatten chunked embeddings")?
+        .to_vec1::<f32>()
+        .context("failed to extract chunked embedding values")?;
+
+    let mut offset = 0usize;
+    let mut batches = Vec::with_capacity(batch);
+    for _ in 0..batch {
+        let mut chunk_vectors = Vec::with_capacity(patches);
+        for _ in 0..patches {
+            let end = offset + dims;
+            chunk_vectors.push(values[offset..end].to_vec());
+            offset = end;
+        }
+        batches.push(chunk_vectors);
+    }
+    Ok(batches)
 }

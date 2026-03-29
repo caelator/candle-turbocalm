@@ -3288,6 +3288,7 @@ dependencies = [
  "bytes",
  "candle-core",
  "candle-nn",
+ "chrono",
  "clap",
  "http",
  "http-body-util",

@@ -6,7 +6,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 use turbocalm_models::CalmAutoencoderConfig;
 use turbocalm_train::server::{load_model_or_random, resolve_mode, ServerState};
 use turbocalm_train::{
-    checkpoint, corpus, run_eval, serve, spike, EmbeddingModel, EvalCorpus, Trainer, TrainingConfig,
+    checkpoint, corpus, run_calibration, run_eval, save_calibration_toml, serve, spike,
+    CalibrationCorpus, EmbeddingModel, EvalCorpus, OnlineLearner, OnlineLearningConfig, Trainer,
+    TrainingConfig,
 };
 
 #[derive(Parser)]
@@ -20,12 +22,14 @@ struct Cli {
 enum Commands {
     /// Run the original forward/backward/optimizer spike.
     Spike,
-    /// Train the CALM autoencoder on a JSONL corpus.
+    /// Train the CALM autoencoder or start the online learner daemon.
     Train {
         #[arg(long)]
-        corpus: PathBuf,
+        corpus: Option<PathBuf>,
         #[arg(long)]
         config: Option<PathBuf>,
+        #[arg(long)]
+        checkpoint: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = DeviceArg::Cpu)]
         device: DeviceArg,
         #[arg(long, default_value_t = 32)]
@@ -46,6 +50,18 @@ enum Commands {
         checkpoint_dir: Option<PathBuf>,
         #[arg(long, default_value_t = 200)]
         min_corpus_size: usize,
+        #[arg(long, default_value_t = false)]
+        online: bool,
+        #[arg(long, default_value_t = 50)]
+        buffer_size: usize,
+        #[arg(long, default_value_t = 2)]
+        mini_epochs: usize,
+        #[arg(long, default_value_t = 11435)]
+        port: u16,
+        #[arg(long, default_value_t = false, conflicts_with = "chunked")]
+        pooled: bool,
+        #[arg(long, default_value_t = false, conflicts_with = "pooled")]
+        chunked: bool,
     },
     /// Evaluate a checkpoint against an eval corpus JSON file.
     Eval {
@@ -55,6 +71,19 @@ enum Commands {
         checkpoint: PathBuf,
         #[arg(long)]
         config: Option<PathBuf>,
+        #[arg(long, value_enum, default_value_t = DeviceArg::Cpu)]
+        device: DeviceArg,
+    },
+    /// Calibrate similarity thresholds from a labeled pair corpus.
+    Calibrate {
+        #[arg(long)]
+        checkpoint: PathBuf,
+        #[arg(long)]
+        corpus: PathBuf,
+        #[arg(long)]
+        config: Option<PathBuf>,
+        #[arg(long)]
+        output: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = DeviceArg::Cpu)]
         device: DeviceArg,
     },
@@ -87,10 +116,16 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum CorpusCommands {
-    /// Merge one or more JSONL corpora into a single output file.
+    /// Merge one or more corpora and live data sources into a single output file.
     Build {
-        #[arg(long, num_args = 1..)]
+        #[arg(long, value_delimiter = ',', num_args = 1..)]
         sources: Vec<PathBuf>,
+        #[arg(long)]
+        memory_db: Option<PathBuf>,
+        #[arg(long)]
+        sessions: Option<PathBuf>,
+        #[arg(long, value_delimiter = ',', num_args = 1..)]
+        git_repos: Vec<PathBuf>,
         #[arg(long)]
         output: PathBuf,
     },
@@ -123,6 +158,7 @@ async fn main() -> Result<()> {
         Commands::Train {
             corpus,
             config,
+            checkpoint,
             device,
             batch_size,
             lr,
@@ -133,26 +169,84 @@ async fn main() -> Result<()> {
             patience,
             checkpoint_dir,
             min_corpus_size,
-        } => handle_train(
-            &corpus,
-            config.as_deref(),
-            device,
-            batch_size,
-            lr,
-            weight_decay,
-            temperature,
-            epochs,
-            eval_interval,
-            patience,
-            checkpoint_dir,
-            min_corpus_size,
-        )?,
+            online,
+            buffer_size,
+            mini_epochs,
+            port,
+            pooled,
+            chunked,
+        } => {
+            let checkpoint_dir = match checkpoint_dir {
+                Some(dir) => dir,
+                None => checkpoint::default_checkpoint_dir()?,
+            };
+
+            if online {
+                handle_train_online(
+                    checkpoint.as_deref(),
+                    config.as_deref(),
+                    device,
+                    build_training_config(
+                        checkpoint_dir,
+                        batch_size,
+                        lr,
+                        weight_decay,
+                        temperature,
+                        epochs,
+                        eval_interval,
+                        patience,
+                        min_corpus_size,
+                    ),
+                    OnlineLearningConfig {
+                        buffer_size,
+                        mini_epochs,
+                    },
+                    port,
+                    pooled,
+                    chunked,
+                )
+                .await?;
+            } else {
+                let corpus = corpus
+                    .as_deref()
+                    .context("--corpus is required unless --online is set")?;
+                handle_train(
+                    corpus,
+                    config.as_deref(),
+                    device,
+                    build_training_config(
+                        checkpoint_dir,
+                        batch_size,
+                        lr,
+                        weight_decay,
+                        temperature,
+                        epochs,
+                        eval_interval,
+                        patience,
+                        min_corpus_size,
+                    ),
+                )?;
+            }
+        }
         Commands::Eval {
             corpus,
             checkpoint,
             config,
             device,
         } => handle_eval(&corpus, &checkpoint, config.as_deref(), device)?,
+        Commands::Calibrate {
+            checkpoint,
+            corpus,
+            config,
+            output,
+            device,
+        } => handle_calibrate(
+            &corpus,
+            &checkpoint,
+            config.as_deref(),
+            output.as_deref(),
+            device,
+        )?,
         Commands::Serve {
             port,
             checkpoint,
@@ -172,7 +266,19 @@ async fn main() -> Result<()> {
             .await?
         }
         Commands::Corpus { command } => match command {
-            CorpusCommands::Build { sources, output } => handle_corpus_build(&sources, &output)?,
+            CorpusCommands::Build {
+                sources,
+                memory_db,
+                sessions,
+                git_repos,
+                output,
+            } => handle_corpus_build(
+                &sources,
+                memory_db.as_deref(),
+                sessions.as_deref(),
+                &git_repos,
+                &output,
+            )?,
         },
         Commands::Checkpoints { command } => match command {
             CheckpointCommands::List { dir } => handle_checkpoint_list(dir.as_deref())?,
@@ -185,15 +291,7 @@ fn handle_train(
     corpus_path: &Path,
     config_path: Option<&Path>,
     device: DeviceArg,
-    batch_size: usize,
-    lr: f64,
-    weight_decay: f64,
-    temperature: f64,
-    epochs: usize,
-    eval_interval: usize,
-    patience: usize,
-    checkpoint_dir: Option<PathBuf>,
-    min_corpus_size: usize,
+    training_config: TrainingConfig,
 ) -> Result<()> {
     let entries = corpus::load_from_jsonl(corpus_path)
         .with_context(|| format!("failed to load {}", corpus_path.display()))?;
@@ -206,21 +304,6 @@ fn handle_train(
     }
 
     let model_config = load_model_config(config_path, None)?;
-    let training_config = TrainingConfig {
-        batch_size,
-        lr,
-        weight_decay,
-        temperature,
-        max_epochs: epochs,
-        eval_interval,
-        patience,
-        checkpoint_dir: match checkpoint_dir {
-            Some(dir) => dir,
-            None => checkpoint::default_checkpoint_dir()?,
-        },
-        min_corpus_size,
-    };
-
     println!(
         "loaded {} entries and generated {} training pairs",
         entries.len(),
@@ -249,6 +332,38 @@ fn handle_train(
     Ok(())
 }
 
+async fn handle_train_online(
+    checkpoint_path: Option<&Path>,
+    config_path: Option<&Path>,
+    device: DeviceArg,
+    training_config: TrainingConfig,
+    online_config: OnlineLearningConfig,
+    port: u16,
+    pooled: bool,
+    chunked: bool,
+) -> Result<()> {
+    let mode = resolve_mode(pooled, chunked)?;
+    let checkpoint_path = checkpoint_path.map(PathBuf::from).or_else(|| {
+        let latest = checkpoint::latest_checkpoint_path_in_dir(&training_config.checkpoint_dir);
+        latest.exists().then_some(latest)
+    });
+    let config = load_model_config(config_path, checkpoint_path.as_deref())?;
+    let device = resolve_device(device)?;
+
+    let learner = match checkpoint_path.as_deref() {
+        Some(path) => {
+            println!("loading online learner checkpoint {}", path.display());
+            OnlineLearner::from_checkpoint(path, config, training_config, device, online_config)?
+        }
+        None => {
+            println!("no checkpoint found; starting online learner with random weights");
+            OnlineLearner::new(config, training_config, device, online_config)?
+        }
+    };
+    let state = ServerState::with_online_learner(learner, mode);
+    serve(state, port).await
+}
+
 fn handle_eval(
     corpus_path: &Path,
     checkpoint_path: &Path,
@@ -260,6 +375,35 @@ fn handle_eval(
     let model = EmbeddingModel::from_checkpoint(checkpoint_path, config, resolve_device(device)?)?;
     let metrics = run_eval(&model, &corpus)?;
     println!("{}", metrics.render_table());
+    Ok(())
+}
+
+fn handle_calibrate(
+    corpus_path: &Path,
+    checkpoint_path: &Path,
+    config_path: Option<&Path>,
+    output_path: Option<&Path>,
+    device: DeviceArg,
+) -> Result<()> {
+    let corpus = CalibrationCorpus::from_json_file(corpus_path)?;
+    let config = load_model_config(config_path, Some(checkpoint_path))?;
+    let model = EmbeddingModel::from_checkpoint(checkpoint_path, config, resolve_device(device)?)?;
+    let report = run_calibration(&model, &corpus)?;
+    let output_path = output_path
+        .map(PathBuf::from)
+        .or_else(|| {
+            checkpoint_path
+                .parent()
+                .map(|parent| parent.join("calibration.toml"))
+        })
+        .unwrap_or_else(|| PathBuf::from("calibration.toml"));
+
+    save_calibration_toml(&report, &output_path)?;
+    println!(
+        "recommended dedup={:.6} cluster={:.6} convergence={:.6}",
+        report.recommended.dedup, report.recommended.cluster, report.recommended.convergence
+    );
+    println!("wrote {}", output_path.display());
     Ok(())
 }
 
@@ -289,18 +433,44 @@ async fn handle_serve(
     serve(state, port).await
 }
 
-fn handle_corpus_build(sources: &[PathBuf], output: &Path) -> Result<()> {
-    if sources.is_empty() {
-        bail!("--sources requires at least one JSONL path")
+fn handle_corpus_build(
+    sources: &[PathBuf],
+    memory_db: Option<&Path>,
+    sessions: Option<&Path>,
+    git_repos: &[PathBuf],
+    output: &Path,
+) -> Result<()> {
+    if sources.is_empty() && memory_db.is_none() && sessions.is_none() && git_repos.is_empty() {
+        bail!("provide at least one of --sources, --memory-db, --sessions, or --git-repos")
     }
 
-    let mut merged = Vec::new();
+    let mut corpora = Vec::new();
     for source in sources {
-        let mut entries = corpus::load_from_jsonl(source)
-            .with_context(|| format!("failed to load {}", source.display()))?;
-        merged.append(&mut entries);
+        corpora.push(
+            corpus::load_from_jsonl(source)
+                .with_context(|| format!("failed to load {}", source.display()))?,
+        );
+    }
+    if let Some(memory_db) = memory_db {
+        corpora.push(
+            corpus::load_from_memory_lancedb(memory_db)
+                .with_context(|| format!("failed to load memory db {}", memory_db.display()))?,
+        );
+    }
+    if let Some(sessions) = sessions {
+        corpora.push(
+            corpus::load_from_session_logs(sessions)
+                .with_context(|| format!("failed to load session logs {}", sessions.display()))?,
+        );
+    }
+    if !git_repos.is_empty() {
+        corpora.push(
+            corpus::load_from_git_commits(git_repos)
+                .context("failed to load git commit corpora")?,
+        );
     }
 
+    let merged = corpus::merge_corpus_sources(&corpora);
     corpus::save_to_jsonl(&merged, output)
         .with_context(|| format!("failed to write {}", output.display()))?;
     println!("merged {} entries into {}", merged.len(), output.display());
@@ -356,5 +526,29 @@ fn resolve_device(device: DeviceArg) -> Result<Device> {
         DeviceArg::Metal => {
             bail!("Metal is disabled for turbocalm-train in this environment; use --device cpu")
         }
+    }
+}
+
+fn build_training_config(
+    checkpoint_dir: PathBuf,
+    batch_size: usize,
+    lr: f64,
+    weight_decay: f64,
+    temperature: f64,
+    epochs: usize,
+    eval_interval: usize,
+    patience: usize,
+    min_corpus_size: usize,
+) -> TrainingConfig {
+    TrainingConfig {
+        batch_size,
+        lr,
+        weight_decay,
+        temperature,
+        max_epochs: epochs,
+        eval_interval,
+        patience,
+        checkpoint_dir,
+        min_corpus_size,
     }
 }
