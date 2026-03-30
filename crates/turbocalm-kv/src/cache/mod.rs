@@ -4,7 +4,7 @@ use crate::quant::pack::{pack_bits, unpack_bits};
 use crate::quant::polar::PolarQuantizer;
 use crate::quant::qjl::QjlProjector;
 use crate::quant::rotation::generate_orthogonal_matrix;
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use candle_core::{DType, Device, Tensor};
 use turbocalm_core::QuantProfile;
 
@@ -243,6 +243,143 @@ impl TurboKvCache {
             .as_ref()
             .cloned()
             .ok_or_else(|| anyhow::Error::msg("KV Cache is empty"))
+    }
+
+    fn decompress_entries(cache: &TurboKvCache, compressed: &[CompressedTensor]) -> Result<Tensor> {
+        if compressed.is_empty() {
+            return Err(anyhow::Error::msg("KV Cache is empty"));
+        }
+
+        let rot = cache
+            .rotation_matrix
+            .as_ref()
+            .ok_or_else(|| anyhow::Error::msg("Uninitialized"))?;
+        let qjl = cache
+            .qjl_projector
+            .as_ref()
+            .ok_or_else(|| anyhow::Error::msg("Uninitialized"))?;
+
+        let mut tensors = Vec::with_capacity(compressed.len());
+        for comp in compressed {
+            tensors.push(Self::decompress_tensor_with(
+                &cache.polar_quantizer,
+                cache.profile.bit_width,
+                rot,
+                qjl,
+                comp,
+            )?);
+        }
+        Self::concat_tensors(&tensors)
+    }
+
+    fn validate_concat_shapes(tensors: &[Tensor], label: &str) -> Result<()> {
+        if tensors.is_empty() {
+            return Err(anyhow::Error::msg(format!("No {label} tensors provided")));
+        }
+
+        let reference_dims = tensors[0].dims().to_vec();
+        let seq_dim = Self::cat_dim(reference_dims.len())?;
+        for (index, tensor) in tensors.iter().enumerate().skip(1) {
+            let dims = tensor.dims();
+            ensure!(
+                dims.len() == reference_dims.len(),
+                "{label} tensor {index} rank mismatch: expected {}, got {}",
+                reference_dims.len(),
+                dims.len()
+            );
+            for (dim_index, (&expected, &actual)) in
+                reference_dims.iter().zip(dims.iter()).enumerate()
+            {
+                if dim_index == seq_dim {
+                    continue;
+                }
+                ensure!(
+                    expected == actual,
+                    "{label} tensor {index} shape mismatch at dim {dim_index}: expected {expected}, got {actual}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn same_profile(lhs: &QuantProfile, rhs: &QuantProfile) -> bool {
+        lhs.bit_width == rhs.bit_width
+            && lhs.rotation_seed == rhs.rotation_seed
+            && lhs.qjl_dim == rhs.qjl_dim
+            && lhs.qjl_threshold == rhs.qjl_threshold
+            && lhs.scale_mode == rhs.scale_mode
+            && lhs.clipping_percentile == rhs.clipping_percentile
+            && lhs.scale_multiplier == rhs.scale_multiplier
+    }
+
+    fn mean_pool_sequence(tensor: &Tensor, target_seq_len: usize) -> Result<Tensor> {
+        ensure!(
+            target_seq_len > 0,
+            "target_seq_len must be greater than zero"
+        );
+
+        let seq_dim = Self::cat_dim(tensor.rank())?;
+        let seq_len = tensor.dims()[seq_dim];
+        ensure!(
+            target_seq_len <= seq_len,
+            "cannot mean-pool sequence length {} to larger target {}",
+            seq_len,
+            target_seq_len
+        );
+
+        if target_seq_len == seq_len {
+            return Ok(tensor.clone());
+        }
+
+        let mut pooled = Vec::with_capacity(target_seq_len);
+        for bucket in 0..target_seq_len {
+            let start = bucket * seq_len / target_seq_len;
+            let end = (bucket + 1) * seq_len / target_seq_len;
+            let chunk = tensor
+                .narrow(seq_dim, start, end - start)
+                .map_err(anyhow::Error::from)?;
+            pooled.push(chunk.mean(seq_dim).map_err(anyhow::Error::from)?);
+        }
+
+        let pooled_refs = pooled.iter().collect::<Vec<_>>();
+        Tensor::stack(&pooled_refs, seq_dim).map_err(anyhow::Error::from)
+    }
+
+    pub fn fuse_caches(caches: &[&TurboKvCache], target_seq_len: usize) -> Result<TurboKvCache> {
+        ensure!(!caches.is_empty(), "cannot fuse an empty list of KV caches");
+
+        let profile = caches[0].profile.clone();
+        for (index, cache) in caches.iter().enumerate() {
+            ensure!(
+                !cache.keys.is_empty() && !cache.values.is_empty(),
+                "cache {index} is empty"
+            );
+            ensure!(
+                Self::same_profile(&profile, &cache.profile),
+                "cache {index} uses a different quantization profile"
+            );
+        }
+
+        let key_tensors = caches
+            .iter()
+            .map(|cache| Self::decompress_entries(cache, &cache.keys))
+            .collect::<Result<Vec<_>>>()?;
+        let value_tensors = caches
+            .iter()
+            .map(|cache| Self::decompress_entries(cache, &cache.values))
+            .collect::<Result<Vec<_>>>()?;
+
+        Self::validate_concat_shapes(&key_tensors, "key")?;
+        Self::validate_concat_shapes(&value_tensors, "value")?;
+
+        let fused_key =
+            Self::mean_pool_sequence(&Self::concat_tensors(&key_tensors)?, target_seq_len)?;
+        let fused_value =
+            Self::mean_pool_sequence(&Self::concat_tensors(&value_tensors)?, target_seq_len)?;
+
+        let mut fused_cache = Self::new(profile);
+        fused_cache.append(&fused_key, &fused_value)?;
+        Ok(fused_cache)
     }
 }
 

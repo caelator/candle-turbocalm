@@ -543,12 +543,20 @@ pub fn run_convert_command(args: ConvertArgs) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use candle_core::Device;
     use tempfile::TempDir;
+
+    fn cpu_test_handler(manifest_dir: &std::path::Path) -> Result<ConvertHandler> {
+        Ok(ConvertHandler {
+            manifest_manager: ManifestManager::new(manifest_dir.to_path_buf())?,
+            device: Device::Cpu,
+        })
+    }
 
     #[test]
     fn test_convert_handler_creation() -> Result<()> {
         let temp_dir = TempDir::new()?;
-        let handler = ConvertHandler::new(Some(temp_dir.path().to_path_buf()))?;
+        let handler = cpu_test_handler(temp_dir.path())?;
 
         // Basic functionality test
         assert!(handler.manifest_manager.list_manifests().is_ok());
@@ -562,7 +570,7 @@ mod tests {
         use std::collections::HashMap;
 
         let temp_dir = TempDir::new()?;
-        let handler = ConvertHandler::new(Some(temp_dir.path().to_path_buf()))?;
+        let handler = cpu_test_handler(temp_dir.path())?;
 
         // Create test tensors
         let mut tensors = HashMap::new();
@@ -585,7 +593,7 @@ mod tests {
         use std::collections::HashMap;
 
         let temp_dir = TempDir::new()?;
-        let handler = ConvertHandler::new(Some(temp_dir.path().to_path_buf()))?;
+        let handler = cpu_test_handler(temp_dir.path())?;
 
         let f16_values = [f16::from_f32(1.0), f16::from_f32(-2.5)];
         let bf16_values = [bf16::from_f32(3.25), bf16::from_f32(-4.5)];

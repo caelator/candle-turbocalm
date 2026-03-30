@@ -26,6 +26,24 @@ impl Default for DevicePreference {
 pub struct DeviceSelector;
 
 impl DeviceSelector {
+    #[cfg(feature = "metal")]
+    fn try_metal_device() -> Result<Device, String> {
+        match std::panic::catch_unwind(|| Device::new_metal(0)) {
+            Ok(Ok(device)) => Ok(device),
+            Ok(Err(err)) => Err(err.to_string()),
+            Err(_) => Err("Metal device creation panicked".to_string()),
+        }
+    }
+
+    #[cfg(feature = "cuda")]
+    fn try_cuda_device() -> Result<Device, String> {
+        match std::panic::catch_unwind(|| Device::new_cuda(0)) {
+            Ok(Ok(device)) => Ok(device),
+            Ok(Err(err)) => Err(err.to_string()),
+            Err(_) => Err("CUDA device creation panicked".to_string()),
+        }
+    }
+
     /// Select the best available device based on preference
     pub fn select(preference: DevicePreference) -> candle_core::Result<Device> {
         match preference {
@@ -48,7 +66,7 @@ impl DeviceSelector {
     fn select_gpu() -> candle_core::Result<Device> {
         #[cfg(feature = "metal")]
         {
-            match Device::new_metal(0) {
+            match Self::try_metal_device() {
                 Ok(device) => {
                     info!("Using Metal GPU device");
                     return Ok(device);
@@ -61,7 +79,7 @@ impl DeviceSelector {
 
         #[cfg(feature = "cuda")]
         {
-            match Device::new_cuda(0) {
+            match Self::try_cuda_device() {
                 Ok(device) => {
                     info!("Using CUDA GPU device");
                     return Ok(device);
@@ -96,7 +114,7 @@ impl DeviceSelector {
             DeviceType::Metal => {
                 #[cfg(feature = "metal")]
                 {
-                    Device::new_metal(0).is_ok()
+                    Self::try_metal_device().is_ok()
                 }
                 #[cfg(not(feature = "metal"))]
                 {
@@ -106,7 +124,7 @@ impl DeviceSelector {
             DeviceType::Cuda => {
                 #[cfg(feature = "cuda")]
                 {
-                    Device::new_cuda(0).is_ok()
+                    Self::try_cuda_device().is_ok()
                 }
                 #[cfg(not(feature = "cuda"))]
                 {
